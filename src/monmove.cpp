@@ -1799,6 +1799,15 @@ int monster::calc_movecost( const map &here, const tripoint_bub_ms &from,
 
     int movecost = std::max( tilecosts[from] + tilecosts[to], 1 ) * 25;
 
+    if( from.z() != to.z() && !flies() &&
+        !here.has_flag( ter_furn_flag::TFLAG_RAMP, from ) &&
+        !here.has_flag( ter_furn_flag::TFLAG_RAMP_UP, from ) &&
+        !here.has_flag( ter_furn_flag::TFLAG_RAMP_DOWN, from ) ) {
+        // Climbing between z-levels is slower than flat movement,
+        // consistent with map::combined_movecost and game::vertical_move.
+        movecost += 50;
+    }
+
     add_msg_debug( debugmode::DF_MONMOVE, "%s t1:%i  t2:%i movecost: %i", name(), tilecosts[from],
                    tilecosts[to], movecost );
     return movecost;

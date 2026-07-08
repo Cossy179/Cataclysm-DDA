@@ -69,6 +69,7 @@ The single biggest remaining gap. Monster movement still contains a legacy "stai
 - ✅ Implement the stair/climb movement penalty flagged by `// TODO: Penalize for using stairs` (`map::combined_movecost` in `src/map.cpp`): non-flying movement between z-levels now costs an extra 50 move points (half a turn) unless taken via a gradual ramp. Covered by the `stairs_cost_more_than_flat_movement` test in `tests/move_cost_test.cpp`.
 - ✅ The player's own stair/ladder traversal (`game::vertical_move` in `src/game.cpp`) charges the same +50 penalty (fliers and gliders exempt), so the avatar, NPCs and pathfinding all agree on what stairs cost.
 - ✅ The A* pathfinder's stair transition g-score (`src/pathfinding.cpp`) now matches the movement-cost model: a stair step costs 1.5 normal steps instead of 1.0.
+- ✅ Monsters pay the same +50 climb penalty in `monster::calc_movecost` (`src/monmove.cpp`), fliers and ramps exempt — every actor now agrees on what vertical movement costs.
 
 ### 1.3 Single-z audits
 
