@@ -104,9 +104,8 @@ Today `cata_tiles::draw()` both *decides what is visible* and *draws it*. Split 
 
 ### 2.2 Define the renderer interface
 
-- A `world_renderer` interface with (at minimum): initialize/shutdown, `draw(const render_scene &)`, resize, and capability queries.
-- The existing SDL2 sprite blitter becomes the first implementation (`sdl2_sprite_renderer`), wrapping the current `SDL_RenderCopyEx` / `GeometryRenderer` path with no behavior change.
-- Renderer selection joins the existing `RENDERER` option machinery in `src/options.cpp`.
+- ✅ First slice implemented: the `world_renderer` interface (`src/world_renderer.h`) abstracts the world-viewport draw call. The existing sprite blitter is the default backend (`sdl2_sprite_world_renderer` in `src/sdltiles.cpp`), and a `flat_color` debug backend — drawing the map as flat colored blocks from map data and the visibility cache with no tileset involvement — proves the seam, selectable at runtime via the new `WORLD_RENDERER` display option (`src/options.cpp`).
+- Next: evolve the interface toward `draw(const render_scene &)` once the scene description (2.1) exists, and add initialize/shutdown/resize/capability hooks when the first non-SDL backend needs them.
 
 ### 2.3 Decouple UI composition from world rendering
 

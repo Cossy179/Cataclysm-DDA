@@ -66,6 +66,7 @@
 #include "map.h"
 #include "map_extras.h"
 #include "mapbuffer.h"
+#include "mapdata.h"
 #include "mission.h"
 #include "npc.h"
 #include "options.h"
@@ -76,10 +77,12 @@
 #include "path_info.h"
 #include "sdl_geometry.h"
 #include "sdl_renderer_recovery.h"
+#include "sdl_utils.h"
 #include "sdl_wrappers.h"
 #include "sdl_font.h"
 #include "tileset_loader.h"
 #include "sdl_gamepad.h"
+#include "world_renderer.h"
 #if defined(SDL_SOUND)
 #include "sound_backend.h"
 #endif
@@ -3641,6 +3644,105 @@ static bool draw_window( Font_Ptr &font, const catacurses::window &w,
                         force_full );
 }
 
+namespace
+{
+
+// The normal renderer: the existing sprite-blitting tile drawing code.
+class sdl2_sprite_world_renderer : public world_renderer
+{
+    public:
+        std::string id() const override {
+            return "sprites";
+        }
+
+        void draw_world( const point &dest, const tripoint_bub_ms &center,
+                         int width, int height,
+                         std::multimap<point, formatted_text> &overlay_strings,
+                         color_block_overlay_container &color_blocks ) override {
+            tilecontext->draw( dest, center, width, height, overlay_strings, color_blocks );
+        }
+};
+
+// Debug backend proving the world_renderer seam: draws the current z-level
+// as flat colored blocks using only map data and the visibility cache, with
+// no tileset involvement at all.
+class flat_color_world_renderer : public world_renderer
+{
+    public:
+        std::string id() const override {
+            return "flat_color";
+        }
+
+        void draw_world( const point &dest, const tripoint_bub_ms &center,
+                         int width, int height,
+                         std::multimap<point, formatted_text> &/* overlay_strings */,
+                         color_block_overlay_container &/* color_blocks */ ) override {
+            map &here = get_map();
+            const level_cache &ch = here.access_cache( center.z() );
+            const visibility_variables &cache = here.get_visibility_variables_cache();
+            const int tw = tilecontext->get_tile_width();
+            const int th = tilecontext->get_tile_height();
+            const int cols = width / tw + 1;
+            const int rows = height / th + 1;
+            const point top_left( center.x() - cols / 2, center.y() - rows / 2 );
+
+            geometry->rect( renderer, SDL_Rect{ dest.x, dest.y, width, height },
+                            SDL_Color{ 0, 0, 0, 255 } );
+
+            for( int sy = 0; sy < rows; sy++ ) {
+                for( int sx = 0; sx < cols; sx++ ) {
+                    const tripoint_bub_ms p( top_left.x + sx, top_left.y + sy, center.z() );
+                    if( !here.inbounds( p ) ) {
+                        continue;
+                    }
+                    const lit_level ll = ch.visibility_cache[p.x()][p.y()];
+                    SDL_Color color;
+                    switch( here.get_visibility( ll, cache ) ) {
+                        case visibility_type::CLEAR:
+                        case visibility_type::LIT:
+                            color = curses_color_to_SDL( here.has_furn( p )
+                                                         ? here.furn( p )->color()
+                                                         : here.ter( p )->color() );
+                            break;
+                        case visibility_type::BOOMER:
+                        case visibility_type::BOOMER_DARK:
+                            color = SDL_Color{ 192, 0, 192, 255 };
+                            break;
+                        case visibility_type::DARK:
+                            color = SDL_Color{ 32, 32, 32, 255 };
+                            break;
+                        case visibility_type::HIDDEN:
+                        default:
+                            continue;
+                    }
+                    geometry->rect( renderer, dest + point( sx * tw, sy * th ), tw, th, color );
+                }
+            }
+
+            // Mark the avatar so the view is navigable.
+            const tripoint_bub_ms you = get_avatar().pos_bub();
+            if( you.z() == center.z() ) {
+                const point ps( you.x() - top_left.x, you.y() - top_left.y );
+                if( ps.x >= 0 && ps.x < cols && ps.y >= 0 && ps.y < rows ) {
+                    geometry->rect( renderer, dest + point( ps.x * tw, ps.y * th ), tw, th,
+                                    SDL_Color{ 255, 255, 255, 255 } );
+                }
+            }
+        }
+};
+
+} // namespace
+
+world_renderer &get_active_world_renderer()
+{
+    static sdl2_sprite_world_renderer sprite_renderer;
+    static flat_color_world_renderer flat_renderer;
+    if( get_option<std::string>( "WORLD_RENDERER" ) == flat_renderer.id() ) {
+        return flat_renderer;
+    }
+    return sprite_renderer;
+}
+
 void cata_cursesport::curses_drawwindow( const catacurses::window &w )
 {
     display_buffer_draw_scope draw_scope;
@@ -3664,9 +3766,10 @@ void cata_cursesport::curses_drawwindow( const catacurses::window &w )
         // Strings with colors do be drawn with map_font on top of tiles.
         std::multimap<point, formatted_text> overlay_strings;
 
-        // game::w_terrain can be drawn by the tilecontext.
-        // skip the normal drawing code for it.
-        tilecontext->draw(
+        // game::w_terrain is drawn by the active world renderer
+        // (the sprite tilecontext by default); skip the normal
+        // curses drawing code for it.
+        get_active_world_renderer().draw_world(
             point( win->pos.x * fontwidth, win->pos.y * fontheight ),
             g->ter_view_p,
             TERRAIN_WINDOW_TERM_WIDTH * font->width,

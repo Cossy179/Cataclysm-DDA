@@ -2769,6 +2769,12 @@ void options_manager::add_options_graphics()
              true, COPT_CURSES_HIDE
            );
 #endif
+
+        add( "WORLD_RENDERER", page_id, to_translation( "World renderer" ),
+             to_translation( "Which backend draws the world viewport.  \"sprites\" is the normal tile renderer.  \"flat colors\" is a debug backend that draws the map as flat colored blocks without any tileset." ),
+        { { "sprites", to_translation( "sprites" ) }, { "flat_color", to_translation( "flat colors (debug)" ) } },
+        "sprites", COPT_CURSES_HIDE
+           );
         // FRAMEBUFFER_ACCEL only meaningful for the SDL2 software renderer
         // path; under SDL3 the renderer is hidden and software fallback is
         // automatic, so the option is hidden too.
