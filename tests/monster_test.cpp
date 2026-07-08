@@ -59,8 +59,11 @@ static const mtype_id pseudo_dormant_mon_zombie_fat( "pseudo_dormant_mon_zombie_
 static const oter_str_id oter_field( "field" );
 
 static const ter_str_id ter_t_fence( "t_fence" );
+static const ter_str_id ter_t_floor( "t_floor" );
 static const ter_str_id ter_t_grass( "t_grass" );
 static const ter_str_id ter_t_palisade( "t_palisade" );
+static const ter_str_id ter_t_stairs_down( "t_stairs_down" );
+static const ter_str_id ter_t_stairs_up( "t_stairs_up" );
 static const ter_str_id ter_t_water_dp( "t_water_dp" );
 
 
@@ -127,6 +130,60 @@ std::ostream &operator<<( std::ostream &os, const std::vector<track> &vec )
 }
 
 } // namespace
+
+// Walk a monster toward a destination on another z-level, returning true if
+// it manages to change z-levels within the turn limit.
+static bool monster_reaches_zlevel( const std::string &monster_type,
+                                    const tripoint_bub_ms &start, const tripoint_bub_ms &goal )
+{
+    clear_creatures();
+    map &here = get_map();
+    monster &test_monster = spawn_test_monster( monster_type, start );
+    test_monster.anger = 100;
+    test_monster.set_dest( here.get_abs( goal ) );
+    test_monster.set_moves( 0 );
+    bool changed_level = false;
+    for( int turn = 0; turn < 200 && !changed_level; ++turn ) {
+        test_monster.mod_moves( test_monster.get_speed() );
+        while( test_monster.get_moves() >= 0 && !changed_level ) {
+            test_monster.anger = 100;
+            test_monster.move();
+            changed_level = test_monster.posz() == goal.z();
+        }
+    }
+    g->remove_zombie( test_monster );
+    return changed_level;
+}
+
+TEST_CASE( "monster_chases_target_across_z_levels", "[monster][zlevel][pathfinding]" )
+{
+    map &here = get_map();
+    clear_map( 0, 1 );
+
+    const tripoint_bub_ms stairs_lower( 70, 70, 0 );
+    const tripoint_bub_ms stairs_upper = stairs_lower + tripoint::above;
+    here.ter_set( stairs_lower, ter_t_stairs_up );
+    here.ter_set( stairs_upper, ter_t_stairs_down );
+    // A walkable platform on the upper level around the stairs
+    for( const tripoint_bub_ms &p : here.points_in_radius( stairs_upper, 2 ) ) {
+        if( p != stairs_upper ) {
+            here.ter_set( p, ter_t_floor );
+        }
+    }
+    here.invalidate_map_cache( 0 );
+    here.invalidate_map_cache( 1 );
+    here.build_map_cache( 0 );
+
+    SECTION( "up the stairs" ) {
+        const tripoint_bub_ms start = stairs_lower + tripoint{ -2, 0, 0 };
+        CHECK( monster_reaches_zlevel( "mon_zombie", start, stairs_upper ) );
+    }
+
+    SECTION( "down the stairs" ) {
+        const tripoint_bub_ms start = stairs_upper + tripoint{ 2, 0, 0 };
+        CHECK( monster_reaches_zlevel( "mon_zombie", start, stairs_lower ) );
+    }
+}
 
 /**
  * Simulate a player running from the monster, checking if it can catch up.
