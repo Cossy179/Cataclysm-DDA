@@ -2826,8 +2826,11 @@ int map::combined_movecost( const tripoint_bub_ms &from, const tripoint_bub_ms &
         return 0;
     }
 
-    // TODO: Penalize for using stairs
-    return ( cost1 + cost2 + modifier ) * mults[match] / 2;
+    // Climbing stairs, ladders and ledges is slower than walking on flat ground.
+    // +2 is one extra tile of normal terrain (50 move points); ramps are gradual
+    // enough to keep their unmodified cost.
+    const int stair_penalty = via_ramp ? 0 : 2;
+    return ( cost1 + cost2 + modifier + stair_penalty ) * mults[match] / 2;
 }
 
 bool map::valid_move( const tripoint_bub_ms &from, const tripoint_bub_ms &to,
@@ -3872,14 +3875,18 @@ bool map::is_flammable( const tripoint_bub_ms &p )
 
 void map::decay_fields_and_scent( const time_duration &amount )
 {
-    // TODO: Make this happen on all z-levels
-
     // Decay scent separately, so that later we can use field count to skip empty submaps
     get_scent().decay();
 
-    // Coordinate code copied from lightmap calculations
-    // TODO: Z
-    const int smz = abs_sub.z();
+    const int minz = zlevels ? -OVERMAP_DEPTH : abs_sub.z();
+    const int maxz = zlevels ? OVERMAP_HEIGHT : abs_sub.z();
+    for( int smz = minz; smz <= maxz; ++smz ) {
+        decay_fields_and_scent_on_zlevel( amount, smz );
+    }
+}
+
+void map::decay_fields_and_scent_on_zlevel( const time_duration &amount, const int smz )
+{
     const auto &outside_cache = get_cache_ref( smz ).outside_cache;
     for( int smx = 0; smx < my_MAPSIZE; ++smx ) {
         for( int smy = 0; smy < my_MAPSIZE; ++smy ) {
@@ -9790,10 +9797,9 @@ void map::spawn_monsters_submap_group( const tripoint_rel_sm &gp, mongroup &grou
         }
     }
 
-    if( gp.z() != player_character.posz() ) {
-        // Note: this is only OK because 3D vision isn't a thing yet. 3D vision is a thing! Is this still OK?
-        ignore_sight = true;
-    }
+    // No special handling for submaps on other z-levels: the player has 3D vision
+    // and the sees() check below correctly handles cross-z-level lines of sight,
+    // so monsters don't spawn in plain view over a ledge.
 
     const auto allow_on_terrain = [&]( const tripoint_bub_ms & p ) {
         // TODO: flying creatures should be allowed to spawn without a floor,

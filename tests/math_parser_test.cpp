@@ -377,6 +377,12 @@ TEST_CASE( "math_parser_dialogue_integration", "[math_parser]" )
     CHECK( testexp.parse( "u_val('stamina')" ) );
     CHECK( testexp.eval( d ) == get_avatar().get_stamina() );
 
+    // z-level of an actor's position
+    CHECK( testexp.parse( "z_level('u')" ) );
+    CHECK( testexp.eval( d ) == get_avatar().pos_abs().z() );
+    CHECK( testexp.parse( "z_level('npc')" ) );
+    CHECK( testexp.eval( d ) == dude.pos_abs().z() );
+
     // units test
     CHECK( testexp.parse( "time('1 m')" ) );
     CHECK( testexp.eval( d ) == 60 );

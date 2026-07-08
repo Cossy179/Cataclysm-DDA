@@ -1568,6 +1568,7 @@ class map
         // See fields.cpp
         void process_fields();
         void process_fields_in_submap( submap *current_submap, const tripoint_bub_sm &submap_pos );
+        void decay_fields_and_scent_on_zlevel( const time_duration &amount, int smz );
         /**
          * Apply field effects to the creature when it's on a square with fields.
          */

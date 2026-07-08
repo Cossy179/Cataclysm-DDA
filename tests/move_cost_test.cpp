@@ -51,6 +51,8 @@ static const move_mode_id move_mode_walk( "walk" );
 
 static const ter_str_id ter_t_grass( "t_grass" );
 static const ter_str_id ter_t_pavement( "t_pavement" );
+static const ter_str_id ter_t_stairs_down( "t_stairs_down" );
+static const ter_str_id ter_t_stairs_up( "t_stairs_up" );
 
 static const trait_id trait_200_MOVE_COST_REDUCTION( "200_MOVE_COST_REDUCTION" );
 static const trait_id trait_HOOVES( "HOOVES" );
@@ -71,6 +73,34 @@ TEST_CASE( "being_knocked_down_triples_movement_cost", "[move_cost][downed]" )
     CHECK( ava.run_cost( 200 ) == 600 );
     CHECK( ava.run_cost( 300 ) == 900 );
     CHECK( ava.run_cost( 400 ) == 1200 );
+}
+
+TEST_CASE( "stairs_cost_more_than_flat_movement", "[move_cost][zlevel]" )
+{
+    map &here = get_map();
+    clear_map( 0, 1 );
+
+    const tripoint_bub_ms lower( 60, 60, 0 );
+    const tripoint_bub_ms upper = lower + tripoint::above;
+    const tripoint_bub_ms flat_a = lower + tripoint{ 5, 0, 0 };
+    const tripoint_bub_ms flat_b = flat_a + tripoint::east;
+
+    here.ter_set( lower, ter_t_stairs_up );
+    here.ter_set( upper, ter_t_stairs_down );
+    here.ter_set( flat_a, ter_t_grass );
+    here.ter_set( flat_b, ter_t_grass );
+
+    REQUIRE( here.valid_move( lower, upper ) );
+    // Stairs and grass share the same per-tile cost, isolating the climb penalty
+    REQUIRE( here.move_cost( lower ) == here.move_cost( flat_a ) );
+    REQUIRE( here.move_cost( upper ) == here.move_cost( flat_b ) );
+
+    const int flat_cost = here.combined_movecost( flat_a, flat_b );
+    const int stair_cost = here.combined_movecost( lower, upper );
+    // Climbing stairs costs half a turn more than a normal step
+    CHECK( stair_cost == flat_cost + 50 );
+    // Fliers ascend at no extra cost
+    CHECK( here.combined_movecost( lower, upper, nullptr, 0, true ) == flat_cost );
 }
 
 TEST_CASE( "footwear_may_affect_movement_cost", "[move_cost][shoes]" )

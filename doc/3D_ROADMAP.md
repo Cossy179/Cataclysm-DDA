@@ -54,6 +54,8 @@ In short: the engine already computes a full 3D visible scene every frame — it
 
 Pure game-logic work, no graphics. Benefits every build including curses. Each item is independently mergeable.
 
+**Status:** items marked ✅ are implemented on this branch; unmarked items are open.
+
 ### 1.1 Real multi-z monster pathfinding
 
 The single biggest remaining gap. Monster movement still contains a legacy "stair teleport": monsters at aligned stairs are teleported between z-levels rather than pathing (`src/monmove.cpp`, marked with `// TODO: Remove z-level stair bullshit teleport after aligning all stairs`).
@@ -64,14 +66,15 @@ The single biggest remaining gap. Monster movement still contains a legacy "stai
 
 ### 1.2 Z-aware movement costs
 
-- Implement the stair/climb movement penalty flagged by `// TODO: Penalize for using stairs` in `map::move_cost` helpers (`src/map.cpp`).
-- Make vertical movement cost visible to pathfinding so AI stops treating stairs as free.
+- ✅ Implement the stair/climb movement penalty flagged by `// TODO: Penalize for using stairs` (`map::combined_movecost` in `src/map.cpp`): non-flying movement between z-levels now costs an extra 50 move points (half a turn) unless taken via a gradual ramp. Covered by the `stairs_cost_more_than_flat_movement` test in `tests/move_cost_test.cpp`.
+- Make vertical movement cost visible to pathfinding so AI stops treating stairs as free (the A* in `src/pathfinding.cpp` still uses its own small stair g-score bonus).
 
 ### 1.3 Single-z audits
 
-- Sweep the remaining `// TODO: Support z-levels` / "make this happen on all z-levels" helpers in `src/map.cpp` and fix or document each.
-- Re-verify the stale 3D-vision assumption noted in `src/map.cpp` ("this is only OK because 3D vision isn't a thing yet. 3D vision is a thing! Is this still OK?") and remove the `ignore_sight` shortcut if it is no longer valid.
-- Add an EOC/dialogue condition for querying z-level (TODO in `src/condition.cpp`).
+- ✅ `map::decay_fields_and_scent` (`src/map.cpp`) now decays fields on **all** loaded z-levels instead of only the player's, matching the `map::process_fields` pattern — rain and time now affect fire/smoke on floors above and below you.
+- ✅ Removed the stale 3D-vision shortcut in `map::spawn_monsters_submap_group` (`src/map.cpp`): monster groups no longer skip the player-line-of-sight check just because they spawn on another z-level, so monsters can't pop into existence in plain view over a ledge.
+- ✅ Added the `z_level()` math function (`src/math_parser_diag.cpp`, documented in `doc/JSON/NPCs.md`) so EOC/dialogue JSON can query the z-level of a location or actor — resolving the TODO in `src/condition.cpp` `f_map_in_city`. Covered by tests in `tests/math_parser_test.cpp`.
+- The remaining single-z helper flagged `// TODO: Support z-levels` — `map::build_obstacle_cache` in `src/map.cpp`, the 2D obstacle grid used by shrapnel propagation in `src/explosion.cpp` — is still open; making it 3D belongs with vertical explosion propagation work.
 
 ### 1.4 NPC and faction parity
 

@@ -284,6 +284,24 @@ double distance_eval( const_dialogue const &d, char /* scope */,
     return rl_dist( get_pos( params[0] ), get_pos( params[1] ) );
 }
 
+double z_level_eval( const_dialogue const &d, char /* scope */,
+                     std::vector<diag_value> const &params, diag_kwargs const & /* kwargs */ )
+{
+    const auto get_pos = [&d]( diag_value const & dv ) {
+        if( dv.is_str() ) {
+            std::string const &str = dv.str( d );
+            if( str == "u" ) {
+                return d.const_actor( false )->pos_abs();
+            } else if( str == "npc" ) {
+                return d.const_actor( true )->pos_abs();
+            }
+            throw math::runtime_error( R"(Invalid z_level actor "%s")", str );
+        }
+        return dv.tripoint( d );
+    };
+    return get_pos( params[0] ).z();
+}
+
 double artifact_resonance_eval( const_dialogue const &d, char scope,
                                 std::vector<diag_value> const & /* params */,
                                 diag_kwargs const & /* kwargs */ )
@@ -1908,6 +1926,7 @@ std::map<std::string_view, dialogue_func> const dialogue_funcs{
     { "volume", { "un", 0, volume_eval } },
     { "warmth", { "un", 1, warmth_eval } },
     { "weather", { "g", 1, weather_eval, weather_ass } },
+    { "z_level", { "g", 1, z_level_eval } },
     { "climate_control_str_heat", { "un", 0, climate_control_str_heat_eval } },
     { "climate_control_str_chill", { "un", 0, climate_control_str_chill_eval } },
 };
