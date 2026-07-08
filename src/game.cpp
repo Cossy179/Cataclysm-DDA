@@ -9579,6 +9579,11 @@ void game::vertical_move( int movez, bool force, bool peeking )
             return;
         }
         stairs = *pnt;
+        if( !climb_flying && !u.has_effect( effect_gliding ) ) {
+            // Taking stairs or a ladder is slower than a step on flat ground,
+            // consistent with map::combined_movecost.
+            move_cost += 50;
+        }
     }
 
     if( !force && !climbing && here.dangerous_field_at( stairs ) &&

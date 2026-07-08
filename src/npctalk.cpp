@@ -1070,10 +1070,11 @@ void game::chat( const std::optional<tripoint_bub_ms> &p )
     int volume = player_character.get_shout_volume();
 
     const std::vector<Creature *> available = get_creatures_if( [&]( const Creature & guy ) {
-        // TODO: Get rid of the z-level check when z-level vision gets "better"
+        // 3D vision: anyone visible and in earshot can be chatted with,
+        // including creatures on other z-levels (e.g. on a balcony above).
         return ( guy.is_npc() || ( guy.is_monster() &&
                                    guy.as_monster()->has_flag( mon_flag_CONVERSATION ) &&
-                                   !guy.as_monster()->type->chat_topics.empty() ) ) && player_character.posz() == guy.posz() &&
+                                   !guy.as_monster()->type->chat_topics.empty() ) ) &&
                player_character.sees( here, guy.pos_bub( here ) ) &&
                rl_dist( player_character.pos_abs(), guy.pos_abs() ) <= SEEX * 2;
     } );

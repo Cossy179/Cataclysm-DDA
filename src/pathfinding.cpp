@@ -613,7 +613,9 @@ std::vector<tripoint_bub_ms> map::route( const tripoint_bub_ms &f,
                 }
                 // Use outer layer (cur.z()) for gscore -- the destination
                 // layer may contain stale data at parent_index.
-                int new_g = layer.gscore[parent_index] + 2;
+                // 3 = one normal step (2) plus the stair climb penalty,
+                // matching map::combined_movecost.
+                int new_g = layer.gscore[parent_index] + 3;
                 pf.add_point( new_g, new_g + 2 * rl_dist( dest, t ),
                               cur, dest );
             }
@@ -630,7 +632,9 @@ std::vector<tripoint_bub_ms> map::route( const tripoint_bub_ms &f,
                 if( !inbounds( dest ) ) {
                     continue;
                 }
-                int new_g = layer.gscore[parent_index] + 2;
+                // 3 = one normal step (2) plus the stair climb penalty,
+                // matching map::combined_movecost.
+                int new_g = layer.gscore[parent_index] + 3;
                 pf.add_point( new_g, new_g + 2 * rl_dist( dest, t ),
                               cur, dest );
             }
