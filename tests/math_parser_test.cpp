@@ -378,9 +378,9 @@ TEST_CASE( "math_parser_dialogue_integration", "[math_parser]" )
     CHECK( testexp.eval( d ) == get_avatar().get_stamina() );
 
     // z-level of an actor's position
-    CHECK( testexp.parse( "z_level('u')" ) );
+    CHECK( testexp.parse( "zlevel('u')" ) );
     CHECK( testexp.eval( d ) == get_avatar().pos_abs().z() );
-    CHECK( testexp.parse( "z_level('npc')" ) );
+    CHECK( testexp.parse( "zlevel('npc')" ) );
     CHECK( testexp.eval( d ) == dude.pos_abs().z() );
 
     // units test

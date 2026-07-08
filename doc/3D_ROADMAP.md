@@ -75,7 +75,7 @@ The single biggest remaining gap. Monster movement still contains a legacy "stai
 
 - ✅ `map::decay_fields_and_scent` (`src/map.cpp`) now decays fields on **all** loaded z-levels instead of only the player's, matching the `map::process_fields` pattern — rain and time now affect fire/smoke on floors above and below you.
 - ✅ Removed the stale 3D-vision shortcut in `map::spawn_monsters_submap_group` (`src/map.cpp`): monster groups no longer skip the player-line-of-sight check just because they spawn on another z-level, so monsters can't pop into existence in plain view over a ledge.
-- ✅ Added the `z_level()` math function (`src/math_parser_diag.cpp`, documented in `doc/JSON/NPCs.md`) so EOC/dialogue JSON can query the z-level of a location or actor — resolving the TODO in `src/condition.cpp` `f_map_in_city`. Covered by tests in `tests/math_parser_test.cpp`.
+- ✅ Added the `zlevel()` math function (`src/math_parser_diag.cpp`, documented in `doc/JSON/NPCs.md`) so EOC/dialogue JSON can query the z-level of a location or actor — resolving the TODO in `src/condition.cpp` `f_map_in_city`. Covered by tests in `tests/math_parser_test.cpp`.
 - ✅ Removed the obsolete same-z-level restriction in `game::chat` (`src/npctalk.cpp`): with 3D vision, any visible creature in earshot can be talked to, including ones on other z-levels.
 - The remaining single-z helper flagged `// TODO: Support z-levels` — `map::build_obstacle_cache` in `src/map.cpp`, the 2D obstacle grid used by shrapnel propagation in `src/explosion.cpp` — is still open; making it 3D belongs with vertical explosion propagation work.
 

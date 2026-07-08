@@ -295,7 +295,7 @@ double z_level_eval( const_dialogue const &d, char /* scope */,
             } else if( str == "npc" ) {
                 return d.const_actor( true )->pos_abs();
             }
-            throw math::runtime_error( R"(Invalid z_level actor "%s")", str );
+            throw math::runtime_error( R"(Invalid zlevel actor "%s")", str );
         }
         return dv.tripoint( d );
     };
@@ -1926,7 +1926,7 @@ std::map<std::string_view, dialogue_func> const dialogue_funcs{
     { "volume", { "un", 0, volume_eval } },
     { "warmth", { "un", 1, warmth_eval } },
     { "weather", { "g", 1, weather_eval, weather_ass } },
-    { "z_level", { "g", 1, z_level_eval } },
+    { "zlevel", { "g", 1, z_level_eval } },
     { "climate_control_str_heat", { "un", 0, climate_control_str_heat_eval } },
     { "climate_control_str_chill", { "un", 0, climate_control_str_chill_eval } },
 };
