@@ -91,12 +91,11 @@ namespace cata_shader
 class variant_pass;
 } // namespace cata_shader
 
-#if SDL_MAJOR_VERSION >= 3
 // Process-lifetime variant_pass owned alongside the renderer (WinCreate to
 // WinDestroy). One shared handle so a renderer recreate updates a single pass,
-// not per-context copies.
+// not per-context copies. Always null under SDL2, where shader variant
+// passes don't exist; callers treat null as "no shader work".
 cata_shader::variant_pass *get_shared_variant_pass();
-#endif
 
 // True while the active scope failed to bind the buffer target. Per-scope;
 // consult before drawing so nothing paints onto an unknown SDL target.

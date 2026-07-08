@@ -99,18 +99,18 @@ Refactoring only — zero visual change. This phase creates the seam that lets a
 
 Today `cata_tiles::draw()` both *decides what is visible* and *draws it*. Split those:
 
-- Define a `render_scene` (working name) value type: for each visible map cell, its z-level, terrain/furniture/trap/field/creature entries (sprite or asset IDs, rotation, lighting level, memory status), plus camera parameters (center, zoom, projection). This is essentially a structured form of what `draw_points_cache` plus the 11 `draw_*` layer calls already compute per frame.
-- Building the scene stays in `cata_tiles` (it owns visibility, memory, and lighting queries); consuming it moves behind an interface.
+- ✅ (camera slice) The `render_scene` value type exists (`src/world_renderer.h`) and carries the per-frame camera parameters (viewport destination, map center, dimensions); `world_renderer::draw_world( const render_scene &, … )` is the interface shape all backends implement.
+- Open (the big part): grow `render_scene` to carry per-visible-cell draw entries — z-level, terrain/furniture/trap/field/creature entries (sprite or asset IDs, rotation, lighting level, memory status) — a structured form of what `draw_points_cache` plus the 11 `draw_*` layer calls compute per frame. Building the scene stays in `cata_tiles` (it owns visibility, memory, and lighting queries); consuming it moves fully behind the interface. This is a large refactor of `src/cata_tiles.cpp` and should be its own reviewed effort.
 
 ### 2.2 Define the renderer interface
 
-- ✅ First slice implemented: the `world_renderer` interface (`src/world_renderer.h`) abstracts the world-viewport draw call. The existing sprite blitter is the default backend (`sdl2_sprite_world_renderer` in `src/sdltiles.cpp`), and a `flat_color` debug backend — drawing the map as flat colored blocks from map data and the visibility cache with no tileset involvement — proves the seam, selectable at runtime via the new `WORLD_RENDERER` display option (`src/options.cpp`).
-- Next: evolve the interface toward `draw(const render_scene &)` once the scene description (2.1) exists, and add initialize/shutdown/resize/capability hooks when the first non-SDL backend needs them.
+- ✅ Implemented: the `world_renderer` interface (`src/world_renderer.h`) abstracts the world-viewport draw call as `draw_world( const render_scene &, … )`. The existing sprite blitter is the default backend (`sdl2_sprite_world_renderer` in `src/sdltiles.cpp`), and a `flat_color` debug backend — drawing the map as flat colored blocks from map data and the visibility cache with no tileset involvement — proves the seam supports genuinely different renderers, selectable at runtime via the new `WORLD_RENDERER` display option (`src/options.cpp`). This meets the phase exit criteria: identical default rendering through the interface, plus a runtime-selectable second backend.
+- Open: add initialize/shutdown/resize/capability hooks when the first backend that owns GPU resources (Phase 3) needs them.
 
 ### 2.3 Decouple UI composition from world rendering
 
-- The `ui_adaptor` system (`src/ui_manager.cpp`) and `game::draw()` already separate panel drawing from terrain drawing. Formalize it: the world renderer draws into a viewport (today: the `display_buffer` region), and curses-raster panels plus ImGui composite on top, regardless of which world renderer produced the viewport contents.
-- This keeps every menu, panel, and popup working identically over a 3D viewport later.
+- ✅ Realized at the seam: the world renderer draws into the terrain-window viewport region of the `display_buffer`, and the overlay text, color-block highlights, curses-raster panels and ImGui composite on top in `cata_cursesport::curses_drawwindow` (`src/sdltiles.cpp`) regardless of which backend produced the viewport contents — verified by the `flat_color` backend, under which every menu, panel and popup renders unchanged.
+- This keeps every menu, panel, and popup working identically over a 3D viewport later; a Phase 3 GPU backend rendering to its own target will need the composition step to blit that target into the `display_buffer` at the same point.
 
 **Exit criteria:** tiles build renders pixel-identically (or near-identically) through the new interface; a trivial second backend (e.g. a debug wireframe or flat-color renderer) can be selected at runtime, proving the seam works.
 

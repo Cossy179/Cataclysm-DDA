@@ -1220,12 +1220,15 @@ void convert_event_to_display_buffer_coords( SDL_Event *event )
     }
 }
 
-#if SDL_MAJOR_VERSION >= 3
 cata_shader::variant_pass *get_shared_variant_pass()
 {
+#if SDL_MAJOR_VERSION >= 3
     return shared_variant_pass.get();
-}
+#else
+    // No shader passes under SDL2.
+    return nullptr;
 #endif
+}
 
 namespace
 {
@@ -3655,11 +3658,11 @@ class sdl2_sprite_world_renderer : public world_renderer
             return "sprites";
         }
 
-        void draw_world( const point &dest, const tripoint_bub_ms &center,
-                         int width, int height,
+        void draw_world( const render_scene &scene,
                          std::multimap<point, formatted_text> &overlay_strings,
                          color_block_overlay_container &color_blocks ) override {
-            tilecontext->draw( dest, center, width, height, overlay_strings, color_blocks );
+            tilecontext->draw( scene.dest, scene.center, scene.width, scene.height,
+                               overlay_strings, color_blocks );
         }
 };
 
@@ -3673,20 +3676,21 @@ class flat_color_world_renderer : public world_renderer
             return "flat_color";
         }
 
-        void draw_world( const point &dest, const tripoint_bub_ms &center,
-                         int width, int height,
+        void draw_world( const render_scene &scene,
                          std::multimap<point, formatted_text> &/* overlay_strings */,
                          color_block_overlay_container &/* color_blocks */ ) override {
+            const point &dest = scene.dest;
+            const tripoint_bub_ms &center = scene.center;
             map &here = get_map();
             const level_cache &ch = here.access_cache( center.z() );
             const visibility_variables &cache = here.get_visibility_variables_cache();
             const int tw = tilecontext->get_tile_width();
             const int th = tilecontext->get_tile_height();
-            const int cols = width / tw + 1;
-            const int rows = height / th + 1;
+            const int cols = scene.width / tw + 1;
+            const int rows = scene.height / th + 1;
             const point top_left( center.x() - cols / 2, center.y() - rows / 2 );
 
-            geometry->rect( renderer, SDL_Rect{ dest.x, dest.y, width, height },
+            geometry->rect( renderer, SDL_Rect{ dest.x, dest.y, scene.width, scene.height },
                             SDL_Color{ 0, 0, 0, 255 } );
 
             for( int sy = 0; sy < rows; sy++ ) {
@@ -3769,13 +3773,13 @@ void cata_cursesport::curses_drawwindow( const catacurses::window &w )
         // game::w_terrain is drawn by the active world renderer
         // (the sprite tilecontext by default); skip the normal
         // curses drawing code for it.
-        get_active_world_renderer().draw_world(
+        const render_scene scene{
             point( win->pos.x * fontwidth, win->pos.y * fontheight ),
             g->ter_view_p,
-            TERRAIN_WINDOW_TERM_WIDTH * font->width,
-            TERRAIN_WINDOW_TERM_HEIGHT * font->height,
-            overlay_strings,
-            color_blocks );
+            TERRAIN_WINDOW_TERM_WIDTH *font->width,
+            TERRAIN_WINDOW_TERM_HEIGHT *font->height
+        };
+        get_active_world_renderer().draw_world( scene, overlay_strings, color_blocks );
 
         // color blocks overlay
         if( !color_blocks.second.empty() ) {

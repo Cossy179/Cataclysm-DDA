@@ -12,6 +12,24 @@
 #include "point.h"
 
 /**
+ * Description of what the world viewport should show this frame — the
+ * camera parameters shared by every backend.  Phase 2.1 of
+ * doc/3D_ROADMAP.md grows this into a full scene description with
+ * per-tile draw entries; until then, backends query the map and its
+ * caches directly for tile data.
+ */
+struct render_scene {
+    /** Top-left corner of the viewport in screen pixels. */
+    point dest;
+    /** Map position at the center of the view. */
+    tripoint_bub_ms center;
+    /** Viewport width in pixels. */
+    int width = 0;
+    /** Viewport height in pixels. */
+    int height = 0;
+};
+
+/**
  * Interface for backends that draw the world viewport — everything inside
  * the terrain window: map, creatures, items and effects.  The surrounding
  * UI (curses-rasterized panels, ImGui overlays) composites on top of
@@ -31,11 +49,7 @@ class world_renderer
         virtual std::string id() const = 0;
 
         /**
-         * Draw the world viewport.
-         * @param dest Top-left corner of the viewport in screen pixels.
-         * @param center Map position at the center of the view.
-         * @param width Viewport width in pixels.
-         * @param height Viewport height in pixels.
+         * Draw the world viewport described by `scene`.
          * @param overlay_strings Text the backend wants drawn on top of the
          *        viewport (e.g. item labels); rendered by the UI layer after
          *        this call returns.
@@ -43,8 +57,7 @@ class world_renderer
          *        route previews); rendered by the UI layer after this call
          *        returns.
          */
-        virtual void draw_world( const point &dest, const tripoint_bub_ms &center,
-                                 int width, int height,
+        virtual void draw_world( const render_scene &scene,
                                  std::multimap<point, formatted_text> &overlay_strings,
                                  color_block_overlay_container &color_blocks ) = 0;
 };
