@@ -1,0 +1,175 @@
+#include <algorithm>
+#include <vector>
+
+#include "cata_catch.h"
+#include "render_3d.h"
+
+// Tests for the block_3d renderer's projection math (src/render_3d.h).
+// Pure math, so these run in every test binary, tiles or not.
+
+static render_3d::camera test_camera()
+{
+    render_3d::camera cam;
+    cam.tile_width = 32;
+    cam.origin_x = 0;
+    cam.origin_y = 0;
+    return cam;
+}
+
+TEST_CASE( "render_3d_projection_steps", "[render_3d]" )
+{
+    const render_3d::camera cam = test_camera();
+    REQUIRE( cam.half_w() == 16 );
+    REQUIRE( cam.quarter_w() == 8 );
+    // Load-bearing invariant: one z-level equals half a tile width, which
+    // makes the view direction (1, 1, 1) and depth_key exact.
+    REQUIRE( cam.block_h() == cam.tile_width / 2 );
+
+    const render_3d::fpoint origin = render_3d::project( cam, 0.0f, 0.0f, 0.0f );
+    CHECK( origin.x == 0.0f );
+    CHECK( origin.y == 0.0f );
+
+    // +x goes screen right-down, +y goes screen left-down, +z straight up.
+    const render_3d::fpoint px = render_3d::project( cam, 1.0f, 0.0f, 0.0f );
+    CHECK( px.x == 16.0f );
+    CHECK( px.y == 8.0f );
+    const render_3d::fpoint py = render_3d::project( cam, 0.0f, 1.0f, 0.0f );
+    CHECK( py.x == -16.0f );
+    CHECK( py.y == 8.0f );
+    const render_3d::fpoint pz = render_3d::project( cam, 0.0f, 0.0f, 1.0f );
+    CHECK( pz.x == 0.0f );
+    CHECK( pz.y == -16.0f );
+}
+
+TEST_CASE( "render_3d_depth_key_ordering", "[render_3d]" )
+{
+    // An occluder is strictly nearer (larger key) than what it hides.
+    CHECK( render_3d::depth_key( 1, 0, 0 ) > render_3d::depth_key( 0, 0, 0 ) );
+    CHECK( render_3d::depth_key( 0, 1, 0 ) > render_3d::depth_key( 0, 0, 0 ) );
+    CHECK( render_3d::depth_key( 0, 0, 1 ) > render_3d::depth_key( 0, 0, 0 ) );
+
+    // The z-major counterexample: a wall 3 cells south-east on the same
+    // level is nearer than a floor one level up at the center, so painting
+    // z-levels in order would layer them wrongly.
+    CHECK( render_3d::depth_key( 3, 3, 0 ) > render_3d::depth_key( 0, 0, 1 ) );
+}
+
+TEST_CASE( "render_3d_visible_cell_bounds_cover_viewport", "[render_3d]" )
+{
+    const render_3d::camera cam = test_camera();
+    const int width = 320;
+    const int height = 240;
+    const int z_below = 3;
+
+    int u_min = 0;
+    int u_max = 0;
+    int v_min = 0;
+    int v_max = 0;
+    render_3d::visible_cell_bounds( cam, width, height, z_below, u_min, u_max, v_min, v_max );
+    REQUIRE( u_min < u_max );
+    REQUIRE( v_min < v_max );
+
+    // Brute force: every full block whose projected bounding box touches
+    // the viewport must have (u, v) inside the reported bounds.
+    for( int dz = -z_below; dz <= 0; dz++ ) {
+        for( int dy = -60; dy <= 60; dy++ ) {
+            for( int dx = -60; dx <= 60; dx++ ) {
+                float min_x = 0.0f;
+                float max_x = 0.0f;
+                float min_y = 0.0f;
+                float max_y = 0.0f;
+                bool first = true;
+                for( int cx = 0; cx <= 1; cx++ ) {
+                    for( int cy = 0; cy <= 1; cy++ ) {
+                        for( int ch = 0; ch <= 1; ch++ ) {
+                            const render_3d::fpoint p = render_3d::project(
+                                                            cam, static_cast<float>( dx + cx ), static_cast<float>( dy + cy ),
+                                                            static_cast<float>( dz + ch ) );
+                            min_x = first ? p.x : std::min( min_x, p.x );
+                            max_x = first ? p.x : std::max( max_x, p.x );
+                            min_y = first ? p.y : std::min( min_y, p.y );
+                            max_y = first ? p.y : std::max( max_y, p.y );
+                            first = false;
+                        }
+                    }
+                }
+                const bool on_screen = max_x >= -width / 2.0f && min_x <= width / 2.0f &&
+                                       max_y >= -height / 2.0f && min_y <= height / 2.0f;
+                if( on_screen ) {
+                    const int u = dx - dy;
+                    const int v = dx + dy;
+                    INFO( "dx=" << dx << " dy=" << dy << " dz=" << dz );
+                    CHECK( u >= u_min );
+                    CHECK( u <= u_max );
+                    CHECK( v >= v_min );
+                    CHECK( v <= v_max );
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE( "render_3d_block_emission", "[render_3d]" )
+{
+    const render_3d::camera cam = test_camera();
+    const render_3d::rgba base{ 200, 100, 50, 255 };
+
+    std::vector<render_3d::vtx> out;
+    render_3d::emit_block( out, cam, 0, 0, 0, 0.0f, 1.0f, base );
+    // Three faces, two triangles each.
+    REQUIRE( out.size() == 18 );
+
+    const render_3d::rgba top = render_3d::shade( base, render_3d::FACE_TOP );
+    const render_3d::rgba south = render_3d::shade( base, render_3d::FACE_SOUTH );
+    const render_3d::rgba east = render_3d::shade( base, render_3d::FACE_EAST );
+    const auto color_eq = []( const render_3d::rgba & a, const render_3d::rgba & b ) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    for( int i = 0; i < 6; i++ ) {
+        CHECK( color_eq( out[i].c, top ) );
+        CHECK( color_eq( out[6 + i].c, south ) );
+        CHECK( color_eq( out[12 + i].c, east ) );
+    }
+
+    // Full block spans exactly one z-level of height on the south corner:
+    // the south face's bottom edge is block_h below its top edge.
+    const float top_south_y = out[1].y;   // top face, east... see order below
+    // Vertices 0..5 are the top face (n, e, s, n, s, w); index 2 is south.
+    const float south_corner_top_y = out[2].y;
+    const render_3d::fpoint south_corner_bottom =
+        render_3d::project( cam, 1.0f, 1.0f, 0.0f );
+    CHECK( south_corner_bottom.y - south_corner_top_y ==
+           static_cast<float>( cam.block_h() ) );
+    ( void ) top_south_y;
+
+    // A zero-height block emits only its top face.
+    out.clear();
+    render_3d::emit_block( out, cam, 0, 0, 0, 0.5f, 0.5f, base );
+    CHECK( out.size() == 6 );
+
+    // A billboard is two triangles.
+    out.clear();
+    render_3d::emit_billboard( out, cam, 0, 0, 0, 0.0f, base );
+    CHECK( out.size() == 6 );
+}
+
+TEST_CASE( "render_3d_light_factor", "[render_3d]" )
+{
+    // Floor for darkness, saturation at daylight, monotonic between.
+    CHECK( render_3d::light_factor( 0.0f ) == 0.30f );
+    CHECK( render_3d::light_factor( -5.0f ) == 0.30f );
+    CHECK( render_3d::light_factor( 60.0f ) == 1.0f );
+    CHECK( render_3d::light_factor( 120.0f ) == 1.0f );
+    CHECK( render_3d::light_factor( 30.0f ) > render_3d::light_factor( 10.0f ) );
+
+    // Shading clamps and preserves alpha.
+    const render_3d::rgba c{ 200, 100, 50, 128 };
+    const render_3d::rgba half = render_3d::shade( c, 0.5f );
+    CHECK( half.r == 100 );
+    CHECK( half.g == 50 );
+    CHECK( half.b == 25 );
+    CHECK( half.a == 128 );
+    const render_3d::rgba over = render_3d::shade( c, 2.0f );
+    CHECK( over.r == 255 );
+    CHECK( over.a == 128 );
+}

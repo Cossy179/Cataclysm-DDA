@@ -36,6 +36,11 @@
 
 struct point;
 
+namespace render_3d
+{
+struct vtx;
+} // namespace render_3d
+
 // SDL3 type renames. Use CataFlipMode at call sites.
 #if SDL_MAJOR_VERSION >= 3
 using CataFlipMode = SDL_FlipMode;
@@ -263,6 +268,13 @@ void SetTextureAlphaMod( const std::shared_ptr<SDL_Texture> &texture, Uint8 alph
 void RenderCopyEx( const SDL_Renderer_Ptr &renderer, SDL_Texture *texture,
                    const SDL_Rect *srcrect, const SDL_Rect *dstrect,
                    double angle, const SDL_Point *center, CataFlipMode flip );
+/**
+ * Draw a batch of flat-colored triangles — every three vertices form one
+ * triangle — through the renderer with no texture.  Requires
+ * SDL_RenderGeometry (SDL 2.0.18+); logs an error and draws nothing on
+ * older SDL2.
+ */
+void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *verts, int count );
 void RenderSetClipRect( const SDL_Renderer_Ptr &renderer, const SDL_Rect *rect );
 void RenderGetClipRect( const SDL_Renderer_Ptr &renderer, SDL_Rect *rect );
 bool RenderIsClipEnabled( const SDL_Renderer_Ptr &renderer );

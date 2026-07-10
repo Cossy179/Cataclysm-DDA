@@ -116,9 +116,15 @@ Today `cata_tiles::draw()` both *decides what is visible* and *draws it*. Split 
 
 ## Phase 3 — First true-3D backend
 
-The first visible payoff: the same grid world, drawn as real 3D geometry with a GPU API.
+The first visible payoff: the same grid world, drawn as real projected 3D geometry.
+
+**Status: first milestone implemented** — the `block_3d` backend (select `WORLD_RENDERER = 3D blocks` in display options). Fixed axonometric camera; walls as full-height blocks, floors as slabs, windows/fences/stairs as half-blocks, furniture stacked on top, vehicles as plain gray blocks, creatures as camera-facing billboards; the full visible z-stack renders as real multi-story geometry, lit per tile by the game's lightmap with per-face shading. Implementation: SDL-free projection/mesh math in `src/render_3d.h/.cpp` (unit-tested in `tests/render_3d_test.cpp`), the `RenderTriangles` batch wrapper in `src/sdl_wrappers.cpp` (SDL2/SDL3-proof over `SDL_RenderGeometry`), and `block_3d_world_renderer` in `src/sdltiles.cpp`, which draws one triangle batch per frame in painter's order over the integer depth key `dx + dy + dz` (exact because one z-level is half a tile width tall). A pixel-level smoke test (`tests/block_3d_smoke_test.cpp`) draws through the real software renderer headless.
+
+**Milestone punts** (open work in this phase): fields/items/traps/graffiti; map memory (hidden tiles draw nothing, so remembered terrain vanishes — the biggest UX gap vs sprites); overlay strings and highlight blocks; mouse picking (the inverse projection in `visible_cell_bounds` is the starting point); colored light and night vision; true stair/ramp slopes; animations routed through `tilecontext` (bullets/explosions don't appear); z-levels above the camera; detailed vehicle shapes; chunked mesh caching (geometry is re-emitted per frame — fine at current vertex volumes, revisit with caching keyed to submaps if profiling demands).
 
 ### 3.1 GPU API choice
+
+The milestone deliberately uses SDL2's triangle API (`SDL_RenderGeometry`) — no new dependency, works with the existing renderer and UI compositing. For the *next* step up (real depth buffer, shaders, textured meshes):
 
 Recommendation: **SDL3 GPU API** (first choice) or **bgfx** (fallback), not raw Vulkan.
 
@@ -130,7 +136,7 @@ Recommendation: **SDL3 GPU API** (first choice) or **bgfx** (fallback), not raw 
 
 Start constrained, then loosen:
 
-1. **Fixed-angle axonometric camera** matching today's isometric view — same information visible, no gameplay questions raised. Reuses the existing iso projection conventions and `zlevel_height` semantics.
+1. ✅ **Fixed-angle axonometric camera** matching today's isometric view — same information visible, no gameplay questions raised. Implemented in `src/render_3d.h` (classic 2:1 dimetric, zoom flows through the tile width).
 2. **Limited orbit/tilt** (e.g. four 90° rotations, adjustable pitch) once occlusion/cutaway handling works.
 3. Free perspective camera as a stretch goal — it raises real gameplay-legibility questions (what does "seen" mean when the camera sees more than the avatar) and must never affect the simulation's own FOV, which stays `fov_3d_z_range`-based.
 
@@ -143,7 +149,7 @@ Start constrained, then loosen:
 
 ### 3.4 Lighting bootstrap
 
-- Feed the existing per-cell lighting/visibility results (the `level_cache` lightmap, `lit_level` per cell) into vertex colors or a per-chunk light texture. No new lighting model yet — the game's own light simulation drives the visuals, so 3D output matches 2D output semantically.
+- ✅ Implemented in the milestone: per-cell visibility (`visibility_cache` → `map::get_visibility`) gates what is drawn, and `map::ambient_light_at` drives a per-tile shading factor (`render_3d::light_factor`) baked into vertex colors — the game's own light simulation drives the visuals, so 3D output matches 2D output semantically. Colored light and night-vision tinting remain open.
 
 ### 3.5 Asset pipeline (minimum viable)
 

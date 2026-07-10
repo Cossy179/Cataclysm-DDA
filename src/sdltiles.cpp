@@ -48,6 +48,8 @@
 #include "catacharset.h"
 #include "color.h"
 #include "color_loader.h"
+#include "creature.h"
+#include "creature_tracker.h"
 #include "cursesport.h"
 #include "debug.h"
 #include "filesystem.h"
@@ -75,6 +77,8 @@
 #include "overmap_ui.h"
 #include "overmapbuffer.h"
 #include "path_info.h"
+#include "map_scale_constants.h"
+#include "render_3d.h"
 #include "sdl_geometry.h"
 #include "sdl_renderer_recovery.h"
 #include "sdl_utils.h"
@@ -3735,14 +3739,239 @@ class flat_color_world_renderer : public world_renderer
         }
 };
 
+// First true-3D backend (doc/3D_ROADMAP.md Phase 3): projects the visible
+// z-stack as flat-shaded axonometric blocks — walls as full-height cubes,
+// floors as slabs, windows/fences/stairs as half-blocks, furniture stacked
+// on top, creatures as billboards — lit by the game's real lightmap and
+// drawn as one triangle batch through SDL_RenderGeometry.
+class block_3d_world_renderer : public world_renderer
+{
+    public:
+        std::string id() const override {
+            return "block_3d";
+        }
+
+        void draw_world( const render_scene &scene,
+                         std::multimap<point, formatted_text> &/* overlay_strings */,
+                         color_block_overlay_container &/* color_blocks */ ) override {
+            map &here = get_map();
+            avatar &you = get_avatar();
+            const tripoint_bub_ms center = scene.center;
+            const visibility_variables &vis_vars = here.get_visibility_variables_cache();
+            creature_tracker &creatures = get_creature_tracker();
+
+            render_3d::camera cam;
+            // Clamp far zoom-out: below 8 px/tile the vertex volume explodes
+            // without adding legibility.
+            cam.tile_width = std::max( tilecontext ? tilecontext->get_tile_width() : 32, 8 );
+            cam.origin_x = scene.dest.x + scene.width / 2;
+            cam.origin_y = scene.dest.y + scene.height / 2;
+
+            const int draw_min_z = std::max( you.posz() - fov_3d_z_range, -OVERMAP_DEPTH );
+            const int z_below = center.z() - draw_min_z;
+
+            int u_min = 0;
+            int u_max = 0;
+            int v_min = 0;
+            int v_max = 0;
+            render_3d::visible_cell_bounds( cam, scene.width, scene.height, z_below,
+                                            u_min, u_max, v_min, v_max );
+
+            // Painter's-order buckets over depth_key = dx + dy + dz.
+            const int key_min = v_min - z_below;
+            const size_t bucket_count = static_cast<size_t>( v_max - key_min + 1 );
+            if( buckets_.size() < bucket_count ) {
+                buckets_.resize( bucket_count );
+            }
+            for( auto &bucket : buckets_ ) {
+                bucket.clear();
+            }
+            const auto push = [&]( const draw_entry & e ) {
+                const size_t idx = static_cast<size_t>(
+                                       render_3d::depth_key( e.dx, e.dy, e.dz ) - key_min );
+                if( idx < buckets_.size() ) {
+                    buckets_[idx].push_back( e );
+                }
+            };
+
+            for( int v = v_min; v <= v_max; v++ ) {
+                for( int u = u_min; u <= u_max; u++ ) {
+                    if( ( u + v ) % 2 != 0 ) {
+                        continue;
+                    }
+                    const int dx = ( u + v ) / 2;
+                    const int dy = ( v - u ) / 2;
+                    bool column_top_found = false;
+                    for( int z = center.z(); z >= draw_min_z; z-- ) {
+                        const tripoint_bub_ms p( center.x() + dx, center.y() + dy, z );
+                        if( !here.inbounds( p ) ) {
+                            break;
+                        }
+                        const int dz = z - center.z();
+                        const lit_level ll = here.access_cache( z ).visibility_cache[p.x()][p.y()];
+                        const visibility_type vis = here.get_visibility( ll, vis_vars );
+                        if( vis != visibility_type::HIDDEN ) {
+                            const float top_h = emit_tile( here, p, dx, dy, dz, vis, push );
+                            if( !column_top_found ) {
+                                column_top_found = true;
+                                emit_creature( here, creatures, you, p, dx, dy, dz, top_h, push );
+                            }
+                        }
+                        if( here.dont_draw_lower_floor( p ) ) {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // The avatar is always drawn so the view stays navigable.
+            {
+                const tripoint_bub_ms ppos = you.pos_bub();
+                push( draw_entry{ ppos.x() - center.x(), ppos.y() - center.y(),
+                                  ppos.z() - center.z(), 0.125f, 0.0f,
+                                  render_3d::rgba{ 255, 255, 255, 255 }, true } );
+            }
+
+            verts_.clear();
+            for( const std::vector<draw_entry> &bucket : buckets_ ) {
+                for( const draw_entry &e : bucket ) {
+                    if( e.billboard ) {
+                        render_3d::emit_billboard( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
+                                                   e.color );
+                    } else {
+                        render_3d::emit_block( verts_, cam, e.dx, e.dy, e.dz, e.base_h, e.top_h,
+                                               e.color );
+                    }
+                }
+            }
+
+            const SDL_Rect viewport{ scene.dest.x, scene.dest.y, scene.width, scene.height };
+            geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
+            RenderSetClipRect( renderer, &viewport );
+            RenderTriangles( renderer, verts_.data(), static_cast<int>( verts_.size() ) );
+            RenderSetClipRect( renderer, nullptr );
+        }
+
+    private:
+        struct draw_entry {
+            int dx = 0;
+            int dy = 0;
+            int dz = 0;
+            // Block: bottom and top heights in blocks; billboard: base_h is
+            // the foot height and top_h is unused.
+            float base_h = 0.0f;
+            float top_h = 0.0f;
+            render_3d::rgba color;
+            bool billboard = false;
+        };
+
+        static render_3d::rgba to_rgba( const SDL_Color &c ) {
+            return render_3d::rgba{ c.r, c.g, c.b, c.a };
+        }
+
+        // Classify and emit the geometry for one visible tile; returns the
+        // top height of what was emitted so creatures can stand on it.
+        template<typename PushFn>
+        float emit_tile( map &here, const tripoint_bub_ms &p, const int dx, const int dy,
+                         const int dz, const visibility_type vis, const PushFn &push ) const {
+            float light = 1.0f;
+            render_3d::rgba base;
+            bool true_colors = false;
+            switch( vis ) {
+                case visibility_type::CLEAR:
+                case visibility_type::LIT:
+                    light = render_3d::light_factor( here.ambient_light_at( p ) );
+                    true_colors = true;
+                    break;
+                case visibility_type::BOOMER:
+                case visibility_type::BOOMER_DARK:
+                    base = render_3d::rgba{ 192, 0, 192, 255 };
+                    break;
+                case visibility_type::DARK:
+                    base = render_3d::rgba{ 32, 32, 32, 255 };
+                    break;
+                case visibility_type::HIDDEN:
+                default:
+                    return 0.0f;
+            }
+            const auto tile_color = [&]( const nc_color & c ) {
+                return true_colors
+                       ? render_3d::shade( to_rgba( curses_color_to_SDL( c ) ), light )
+                       : base;
+            };
+
+            const bool open_air = here.is_open_air( p );
+            float top_h = 0.0f;
+            if( !open_air ) {
+                if( here.impassable( p ) && !here.is_transparent( p ) ) {
+                    // Full wall.
+                    top_h = 1.0f;
+                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                      false } );
+                } else if( here.impassable( p ) ||
+                           here.has_flag( ter_furn_flag::TFLAG_GOES_UP, p ) ||
+                           here.has_flag( ter_furn_flag::TFLAG_GOES_DOWN, p ) ||
+                           here.has_flag( ter_furn_flag::TFLAG_RAMP, p ) ||
+                           here.has_flag( ter_furn_flag::TFLAG_RAMP_UP, p ) ||
+                           here.has_flag( ter_furn_flag::TFLAG_RAMP_DOWN, p ) ) {
+                    // See-through obstacles (windows, fences) and vertical
+                    // transitions read as half-height blocks.
+                    top_h = 0.5f;
+                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                      false } );
+                } else {
+                    // Walkable ground: a thin slab.
+                    top_h = 0.125f;
+                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                      false } );
+                    if( here.veh_at( p ) ) {
+                        // Vehicles as plain gray blocks for now.
+                        top_h = 0.5f;
+                        push( draw_entry{ dx, dy, dz, 0.125f, top_h,
+                                          true_colors
+                                          ? render_3d::shade( render_3d::rgba{ 128, 128, 128, 255 }, light )
+                                          : base, false } );
+                    } else if( here.has_furn( p ) ) {
+                        top_h = 0.5f;
+                        push( draw_entry{ dx, dy, dz, 0.125f, top_h,
+                                          tile_color( here.furn( p )->color() ), false } );
+                    }
+                }
+            }
+            return top_h;
+        }
+
+        template<typename PushFn>
+        void emit_creature( map &here, creature_tracker &creatures, const avatar &you,
+                            const tripoint_bub_ms &p, const int dx, const int dy, const int dz,
+                            const float foot_h, const PushFn &push ) const {
+            const Creature *critter = creatures.creature_at( p, true );
+            if( critter == nullptr || critter->is_avatar() || !you.sees( here, *critter ) ) {
+                return;
+            }
+            const float light = render_3d::light_factor( here.ambient_light_at( p ) );
+            const render_3d::rgba color =
+                render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light );
+            push( draw_entry{ dx, dy, dz, foot_h, 0.0f, color, true } );
+        }
+
+        std::vector<std::vector<draw_entry>> buckets_;
+        std::vector<render_3d::vtx> verts_;
+};
+
 } // namespace
 
 world_renderer &get_active_world_renderer()
 {
     static sdl2_sprite_world_renderer sprite_renderer;
     static flat_color_world_renderer flat_renderer;
-    if( get_option<std::string>( "WORLD_RENDERER" ) == flat_renderer.id() ) {
+    static block_3d_world_renderer block_3d_renderer;
+    const std::string selected = get_option<std::string>( "WORLD_RENDERER" );
+    if( selected == flat_renderer.id() ) {
         return flat_renderer;
+    }
+    if( selected == block_3d_renderer.id() ) {
+        return block_3d_renderer;
     }
     return sprite_renderer;
 }

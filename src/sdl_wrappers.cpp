@@ -7,6 +7,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "cata_assert.h"
 #if SDL_MAJOR_VERSION >= 3
@@ -14,6 +15,7 @@
 #endif
 #include "debug.h"
 #include "point.h"
+#include "render_3d.h"
 
 #if defined(USE_SDL3)
 #   include <SDL3_image/SDL_image.h>
@@ -601,6 +603,51 @@ void RenderCopyEx( const SDL_Renderer_Ptr &renderer, SDL_Texture *const texture,
     printErrorIf( SDL_RenderCopyEx( renderer.get(), texture, srcrect, dstrect, angle, center,
                                     flip ) != 0,
                   "SDL_RenderCopyEx failed" );
+#endif
+}
+
+void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *const verts,
+                      const int count )
+{
+    if( !renderer ) {
+        dbg( D_ERROR ) << "Tried to render to a null renderer";
+        return;
+    }
+    if( !verts || count <= 0 ) {
+        return;
+    }
+#if SDL_VERSION_ATLEAST( 2, 0, 18 )
+    static std::vector<SDL_Vertex> scratch;
+    scratch.clear();
+    scratch.reserve( static_cast<size_t>( count ) );
+    for( int i = 0; i < count; i++ ) {
+        SDL_Vertex v{};
+        v.position.x = verts[i].x;
+        v.position.y = verts[i].y;
+#if SDL_MAJOR_VERSION >= 3
+        v.color.r = static_cast<float>( verts[i].c.r ) / 255.0f;
+        v.color.g = static_cast<float>( verts[i].c.g ) / 255.0f;
+        v.color.b = static_cast<float>( verts[i].c.b ) / 255.0f;
+        v.color.a = static_cast<float>( verts[i].c.a ) / 255.0f;
+#else
+        v.color.r = verts[i].c.r;
+        v.color.g = verts[i].c.g;
+        v.color.b = verts[i].c.b;
+        v.color.a = verts[i].c.a;
+#endif
+        scratch.push_back( v );
+    }
+#if SDL_MAJOR_VERSION >= 3
+    printErrorIf( !SDL_RenderGeometry( renderer.get(), nullptr, scratch.data(), count, nullptr,
+                                       0 ),
+                  "SDL_RenderGeometry failed" );
+#else
+    printErrorIf( SDL_RenderGeometry( renderer.get(), nullptr, scratch.data(), count, nullptr,
+                                      0 ) != 0,
+                  "SDL_RenderGeometry failed" );
+#endif
+#else
+    printErrorIf( true, "SDL_RenderGeometry requires SDL 2.0.18 or newer" );
 #endif
 }
 
