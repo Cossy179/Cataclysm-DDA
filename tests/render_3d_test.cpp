@@ -165,6 +165,101 @@ TEST_CASE( "render_3d_block_emission", "[render_3d]" )
     CHECK( out[0].x - out[1].x == static_cast<float>( cam.half_w() ) / 4.0f );
 }
 
+TEST_CASE( "render_3d_sun_face_shading", "[render_3d]" )
+{
+    render_3d::light_env env;
+
+    // Morning sun in the east: east faces brighter than south faces.
+    render_3d::sun_face_shading( 90.0f, 30.0f, env );
+    CHECK( env.face_east > env.face_south );
+    CHECK( env.face_east == Approx( 0.88f ) );
+    CHECK( env.face_south == Approx( 0.60f ) );
+
+    // Midday sun in the south: south faces brighter.
+    render_3d::sun_face_shading( 180.0f, 60.0f, env );
+    CHECK( env.face_south > env.face_east );
+    CHECK( env.face_south == Approx( 0.88f ) );
+
+    // Night: flat moonlit values, south slightly brighter than east.
+    render_3d::sun_face_shading( 0.0f, -10.0f, env );
+    CHECK( env.face_south == Approx( 0.72f ) );
+    CHECK( env.face_east == Approx( 0.66f ) );
+}
+
+TEST_CASE( "render_3d_time_of_day_grading", "[render_3d]" )
+{
+    render_3d::light_env env;
+
+    render_3d::time_of_day_grading( false, false, env );
+    const render_3d::rgba c{ 100, 100, 100, 255 };
+    const render_3d::rgba day = render_3d::grade( c, env );
+    CHECK( day.r == 100 );
+    CHECK( day.g == 100 );
+    CHECK( day.b == 100 );
+
+    render_3d::time_of_day_grading( true, false, env );
+    const render_3d::rgba night = render_3d::grade( c, env );
+    CHECK( night.b > night.r );  // cool blue nights
+    CHECK( night.r < 100 );
+    CHECK( night.a == 255 );
+
+    render_3d::time_of_day_grading( false, true, env );
+    const render_3d::rgba dusk = render_3d::grade( c, env );
+    CHECK( dusk.r > dusk.b );    // warm golden hour
+}
+
+TEST_CASE( "render_3d_corner_occlusion", "[render_3d]" )
+{
+    // Open corner: no darkening.
+    CHECK( render_3d::corner_occlusion( false, false, false ) == 1.0f );
+    // Diagonal only: slight.
+    CHECK( render_3d::corner_occlusion( false, false, true ) == Approx( 0.90f ) );
+    // One side.
+    CHECK( render_3d::corner_occlusion( true, false, false ) == Approx( 0.85f ) );
+    // Both sides wrap the corner fully; the diagonal adds nothing.
+    CHECK( render_3d::corner_occlusion( true, true, false ) == Approx( 0.55f ) );
+    CHECK( render_3d::corner_occlusion( true, true, true ) == Approx( 0.55f ) );
+    // Monotonic: more occluders never brighten.
+    CHECK( render_3d::corner_occlusion( true, false, true ) <
+           render_3d::corner_occlusion( true, false, false ) );
+}
+
+TEST_CASE( "render_3d_shaded_block_emission", "[render_3d]" )
+{
+    const render_3d::camera cam = test_camera();
+    const render_3d::rgba base{ 200, 100, 50, 255 };
+
+    // Corner AO shows up in the top face's per-vertex colors.
+    render_3d::block_shading shading;
+    shading.top_ao = { 1.0f, 1.0f, 0.55f, 1.0f };  // south corner occluded
+    std::vector<render_3d::vtx> out;
+    render_3d::emit_block_shaded( out, cam, 0, 0, 0, 0.0f, 1.0f, base, shading );
+    REQUIRE( out.size() == 18 );
+    const render_3d::rgba open_corner = render_3d::shade( base, render_3d::FACE_TOP );
+    const render_3d::rgba dark_corner = render_3d::shade( base, render_3d::FACE_TOP * 0.55f );
+    // Top face vertex order: n, e, s, n, s, w.
+    CHECK( out[0].c.r == open_corner.r );
+    CHECK( out[2].c.r == dark_corner.r );
+    CHECK( out[2].c.r < out[0].c.r );
+
+    // Dynamic side-face brightness replaces the static face constants.
+    shading = render_3d::block_shading{};
+    shading.south = 0.9f;
+    shading.east = 0.4f;
+    out.clear();
+    render_3d::emit_block_shaded( out, cam, 0, 0, 0, 0.0f, 1.0f, base, shading );
+    const render_3d::rgba south = render_3d::shade( base, 0.9f );
+    const render_3d::rgba east = render_3d::shade( base, 0.4f );
+    CHECK( out[6].c.r == south.r );
+    CHECK( out[12].c.r == east.r );
+
+    // A glow is a single translucent quad.
+    out.clear();
+    render_3d::emit_glow( out, cam, 0, 0, 0, 0.2f, 2.0f, render_3d::rgba{ 255, 160, 40, 80 } );
+    REQUIRE( out.size() == 6 );
+    CHECK( out[0].c.a == 80 );
+}
+
 TEST_CASE( "render_3d_memory_tint", "[render_3d]" )
 {
     // Dim, desaturated, blue-shifted; alpha preserved; clamped.

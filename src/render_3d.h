@@ -2,6 +2,7 @@
 #ifndef CATA_SRC_RENDER_3D_H
 #define CATA_SRC_RENDER_3D_H
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -85,6 +86,47 @@ constexpr float FACE_SOUTH = 0.80f;
 constexpr float FACE_EAST = 0.62f;
 
 /**
+ * Per-frame lighting environment (doc/3D_ROADMAP.md Phase 4): dynamic
+ * sun-direction face brightness and time-of-day color grading.
+ */
+struct light_env {
+    float face_south = FACE_SOUTH;
+    float face_east = FACE_EAST;
+    float grade_r = 1.0f;
+    float grade_g = 1.0f;
+    float grade_b = 1.0f;
+};
+
+/**
+ * Point the side-face brightness at the sun: faces turned toward the sun's
+ * azimuth brighten, faces away darken.  Below the horizon (night) both
+ * faces get flat, slightly cool moonlit values.  Azimuth is degrees
+ * clockwise from north.
+ */
+void sun_face_shading( float azimuth_deg, float altitude_deg, light_env &env );
+
+/** Color-temperature grading for the time of day; day is identity. */
+void time_of_day_grading( bool night, bool dawn_or_dusk, light_env &env );
+
+/** Apply the environment's grading multipliers to a color (alpha unchanged). */
+rgba grade( const rgba &c, const light_env &env );
+
+/**
+ * Ambient-occlusion factor for one top-face corner, from whether the two
+ * edge-adjacent neighbor cells and the diagonal neighbor rise above this
+ * face: classic voxel contact shadows.
+ */
+float corner_occlusion( bool side_a, bool side_b, bool diagonal );
+
+/** Per-face shading inputs for emit_block_shaded. */
+struct block_shading {
+    /** Top-face corner AO factors in north, east, south, west order. */
+    std::array<float, 4> top_ao = { 1.0f, 1.0f, 1.0f, 1.0f };
+    float south = FACE_SOUTH;
+    float east = FACE_EAST;
+};
+
+/**
  * Map an ambient light value (map::ambient_light_at, roughly 0..120) to a
  * shading factor: linear up to comfortable indoor light, saturating at
  * daylight, with a floor so dim-but-visible tiles stay readable.
@@ -122,6 +164,14 @@ void emit_block( std::vector<vtx> &out, const camera &cam, int dx, int dy, int d
                  float base_h, float top_h, const rgba &color );
 
 /**
+ * emit_block with per-corner top-face ambient occlusion (interpolated
+ * across the face) and dynamic side-face brightness.
+ */
+void emit_block_shaded( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                        float base_h, float top_h, const rgba &color,
+                        const block_shading &shading );
+
+/**
  * Emit a camera-facing vertical diamond standing on cell (dx, dy, dz) at
  * height foot_h, for creatures and the avatar.
  */
@@ -135,6 +185,14 @@ void emit_billboard( std::vector<vtx> &out, const camera &cam, int dx, int dy, i
  */
 void emit_marker( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
                   float foot_h, const rgba &color );
+
+/**
+ * Emit a flat, ground-aligned diamond centered on cell (dx, dy, dz) at
+ * height h, spanning size_cells cells across — a translucent light halo
+ * around emissive tiles (needs alpha blending; pass color with alpha).
+ */
+void emit_glow( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                float h, float size_cells, const rgba &color );
 
 } // namespace render_3d
 
