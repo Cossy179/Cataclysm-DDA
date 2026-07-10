@@ -167,11 +167,19 @@ Start constrained, then loosen:
 
 Strictly layered on top of the Phase 3 raster renderer; every step optional and toggleable.
 
-Staged in order of payoff-per-effort:
+**Status: raster-feasible core implemented** on the `block_3d` backend (the steps below that need a GPU depth buffer or shaders wait for the Phase 3 GPU-API upgrade):
 
-1. **Dynamic shadows** — shadow maps for the sun/moon and strong point lights (fires, vehicle headlights). Light sources already exist as simulation data.
-2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits.
-3. **Screen-space effects** — SSAO, bloom (emissive fires, explosions, portal storms), color grading tied to weather and time of day.
+- ✅ **Contact shadows (ambient occlusion)**: top-face corners that walls wrap around darken with classic voxel AO, interpolated across the face via per-vertex colors (`render_3d::corner_occlusion`, `emit_block_shaded`; neighbor sampling in `src/sdltiles.cpp`).
+- ✅ **Dynamic sun-direction shading**: the two visible side faces track the real sun azimuth through the day (`render_3d::sun_face_shading` driven by `sun_azimuth_altitude`) — east faces glow in the morning, south faces at midday, flat cool moonlight at night. Underground stays neutral.
+- ✅ **Time-of-day color grading**: cool blue nights, warm golden-hour dawn/dusk (`render_3d::time_of_day_grading`/`grade`), applied to terrain and creatures; memory and emissive tiles are exempt by design.
+- ✅ **Alpha blending + translucency**: the triangle batch now blends (`RenderTriangles` sets `SDL_BLENDMODE_BLEND`); fields render as translucent overlays.
+- ✅ **Emissive light sources**: light-emitting fields (fire) render ungraded and unshaded at full color with a translucent glow halo (`render_3d::emit_glow`), keyed off the field's real `light_emitted` value.
+
+Staged next steps, in order of payoff-per-effort:
+
+1. **Cast shadows** — true directional shadow volumes/maps for sun and point lights need the GPU backend (depth buffer); the current AO + engine lightmap covers contact and roof shadows.
+2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits. Pairs with tileset-textured faces.
+3. **Screen-space effects** — SSAO (full-screen), bloom (explosions, portal storms), weather-driven grading.
 4. **Global illumination** — start with baked/irradiance approximations per chunk; the fully static terrain between bashes makes caching viable.
 5. **Ray tracing (optional high-end path)** — two candidate routes, to be decided when we get there:
    - **Software voxel ray marching** (à la Teardown): a natural fit since the world is literally a voxel grid; runs on any GPU with compute shaders; likely the pragmatic choice.

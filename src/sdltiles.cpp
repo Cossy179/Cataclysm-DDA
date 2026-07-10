@@ -3777,6 +3777,21 @@ class block_3d_world_renderer : public world_renderer
             const int draw_min_z = std::max( you.posz() - fov_3d_z_range, -OVERMAP_DEPTH );
             const int z_below = center.z() - draw_min_z;
 
+            // Per-frame lighting environment: sun-direction face shading
+            // and time-of-day color grading. Underground keeps the neutral
+            // defaults — no sun to point at.
+            env_ = render_3d::light_env{};
+            if( center.z() >= 0 ) {
+                const std::pair<units::angle, units::angle> sun =
+                    sun_azimuth_altitude( calendar::turn );
+                render_3d::sun_face_shading(
+                    static_cast<float>( to_degrees( sun.first ) ),
+                    static_cast<float>( to_degrees( sun.second ) ), env_ );
+                render_3d::time_of_day_grading(
+                    is_night( calendar::turn ),
+                    is_dawn( calendar::turn ) || is_dusk( calendar::turn ), env_ );
+            }
+
             int u_min = 0;
             int u_max = 0;
             int v_min = 0;
@@ -3861,11 +3876,18 @@ class block_3d_world_renderer : public world_renderer
                             render_3d::emit_marker( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
                                                     e.color );
                             break;
-                        case entry_kind::block:
-                        default:
-                            render_3d::emit_block( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
-                                                   e.top_h, e.color );
+                        case entry_kind::glow:
+                            render_3d::emit_glow( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
+                                                  e.top_h, e.color );
                             break;
+                        case entry_kind::block:
+                        default: {
+                            const render_3d::block_shading shading{ e.ao, env_.face_south,
+                                                                    env_.face_east };
+                            render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
+                                                          e.base_h, e.top_h, e.color, shading );
+                            break;
+                        }
                     }
                 }
             }
@@ -3883,7 +3905,8 @@ class block_3d_world_renderer : public world_renderer
         enum class entry_kind : uint8_t {
             block,      // base_h..top_h extruded block
             billboard,  // creature/avatar diamond; base_h is the foot height
-            marker      // small item/trap diamond; base_h is the foot height
+            marker,     // small item/trap diamond; base_h is the foot height
+            glow        // translucent light halo; base_h is the height, top_h the size
         };
 
         struct draw_entry {
@@ -3891,11 +3914,14 @@ class block_3d_world_renderer : public world_renderer
             int dy = 0;
             int dz = 0;
             // Block: bottom and top heights in blocks; billboard/marker:
-            // base_h is the foot height and top_h is unused.
+            // base_h is the foot height and top_h is unused; glow: base_h is
+            // the height and top_h the diameter in cells.
             float base_h = 0.0f;
             float top_h = 0.0f;
             render_3d::rgba color;
             entry_kind kind = entry_kind::block;
+            // Top-face corner ambient occlusion (blocks only).
+            std::array<float, 4> ao = { 1.0f, 1.0f, 1.0f, 1.0f };
         };
 
         static render_3d::rgba to_rgba( const SDL_Color &c ) {
@@ -3942,7 +3968,8 @@ class block_3d_world_renderer : public world_renderer
             }
             const auto tile_color = [&]( const nc_color & c ) {
                 return true_colors
-                       ? render_3d::shade( to_rgba( curses_color_to_SDL( c ) ), light )
+                       ? render_3d::grade(
+                           render_3d::shade( to_rgba( curses_color_to_SDL( c ) ), light ), env_ )
                        : base;
             };
 
@@ -3967,13 +3994,22 @@ class block_3d_world_renderer : public world_renderer
                     // See-through obstacles (windows, fences) and vertical
                     // transitions read as half-height blocks.
                     top_h = 0.5f;
-                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
-                                      entry_kind::block } );
+                    draw_entry e{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                  entry_kind::block };
+                    if( true_colors ) {
+                        e.ao = top_corner_ao( here, p );
+                    }
+                    push( e );
                 } else {
-                    // Walkable ground: a thin slab.
+                    // Walkable ground: a thin slab with contact shadows
+                    // where walls wrap around it.
                     top_h = 0.125f;
-                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
-                                      entry_kind::block } );
+                    draw_entry e{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                  entry_kind::block };
+                    if( true_colors ) {
+                        e.ao = top_corner_ao( here, p );
+                    }
+                    push( e );
                     const optional_vpart_position ovp = here.veh_at( p );
                     if( ovp ) {
                         const vpart_display disp =
@@ -3990,13 +4026,27 @@ class block_3d_world_renderer : public world_renderer
                 }
 
                 if( true_colors ) {
-                    // Fields as a colored overlay layer.
+                    // Fields as a translucent overlay layer; light-emitting
+                    // fields (fire) render emissive — ungraded, unshaded —
+                    // with a glow halo around them.
                     const field &fld = here.field_at( p );
                     const field_type_id ftype = fld.displayed_field_type();
                     const field_entry *fe = fld.find_field( ftype );
                     if( fe != nullptr && ftype.obj().display_field ) {
                         const float fld_top = top_h + 0.125f;
-                        push( draw_entry{ dx, dy, dz, top_h, fld_top, tile_color( fe->color() ),
+                        const bool emissive = fe->get_intensity_level().light_emitted > 0.0f;
+                        render_3d::rgba fld_color;
+                        if( emissive ) {
+                            fld_color = to_rgba( curses_color_to_SDL( fe->color() ) );
+                            render_3d::rgba halo = fld_color;
+                            halo.a = 70;
+                            push( draw_entry{ dx, dy, dz, fld_top, 2.0f, halo,
+                                              entry_kind::glow } );
+                        } else {
+                            fld_color = tile_color( fe->color() );
+                            fld_color.a = 160;
+                        }
+                        push( draw_entry{ dx, dy, dz, top_h, fld_top, fld_color,
                                           entry_kind::block } );
                         top_h = fld_top;
                     }
@@ -4014,6 +4064,27 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
             return top_h;
+        }
+
+        static bool occludes_at( map &here, const tripoint_bub_ms &p ) {
+            return here.inbounds( p ) && here.impassable( p ) && !here.is_transparent( p );
+        }
+
+        // Classic voxel contact shadows: darken top-face corners that
+        // walls wrap around. Corner order matches block_shading::top_ao
+        // (north, east, south, west).
+        static std::array<float, 4> top_corner_ao( map &here, const tripoint_bub_ms &p ) {
+            const auto tall = [&here, &p]( const int ox, const int oy ) {
+                return occludes_at( here, p + point( ox, oy ) );
+            };
+            const bool n = tall( 0, -1 );
+            const bool e = tall( 1, 0 );
+            const bool s = tall( 0, 1 );
+            const bool w = tall( -1, 0 );
+            return { render_3d::corner_occlusion( n, w, tall( -1, -1 ) ),
+                     render_3d::corner_occlusion( n, e, tall( 1, -1 ) ),
+                     render_3d::corner_occlusion( s, e, tall( 1, 1 ) ),
+                     render_3d::corner_occlusion( s, w, tall( -1, 1 ) ) };
         }
 
         // Record what the player currently sees into map memory, mirroring
@@ -4130,13 +4201,15 @@ class block_3d_world_renderer : public world_renderer
                 return;
             }
             const float light = render_3d::light_factor( here.ambient_light_at( p ) );
-            const render_3d::rgba color =
-                render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light );
+            const render_3d::rgba color = render_3d::grade(
+                                              render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light ),
+                                              env_ );
             push( draw_entry{ dx, dy, dz, foot_h, 0.0f, color, entry_kind::billboard } );
         }
 
         std::vector<std::vector<draw_entry>> buckets_;
         std::vector<render_3d::vtx> verts_;
+        render_3d::light_env env_;
 };
 
 } // namespace

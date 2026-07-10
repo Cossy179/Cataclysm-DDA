@@ -617,6 +617,11 @@ void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *co
         return;
     }
 #if SDL_VERSION_ATLEAST( 2, 0, 18 )
+    // Untextured geometry blends with the renderer's draw blend mode; make
+    // vertex alpha meaningful for the duration of the batch.
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode( renderer.get(), &prev_blend );
+    SDL_SetRenderDrawBlendMode( renderer.get(), SDL_BLENDMODE_BLEND );
     static std::vector<SDL_Vertex> scratch;
     scratch.clear();
     scratch.reserve( static_cast<size_t>( count ) );
@@ -646,6 +651,7 @@ void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *co
                                       0 ) != 0,
                   "SDL_RenderGeometry failed" );
 #endif
+    SDL_SetRenderDrawBlendMode( renderer.get(), prev_blend );
 #else
     printErrorIf( true, "SDL_RenderGeometry requires SDL 2.0.18 or newer" );
 #endif
