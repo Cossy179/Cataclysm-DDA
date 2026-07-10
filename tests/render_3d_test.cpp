@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "cata_catch.h"
@@ -39,6 +40,40 @@ TEST_CASE( "render_3d_projection_steps", "[render_3d]" )
     const render_3d::fpoint pz = render_3d::project( cam, 0.0f, 0.0f, 1.0f );
     CHECK( pz.x == 0.0f );
     CHECK( pz.y == -16.0f );
+}
+
+TEST_CASE( "render_3d_unproject_roundtrip", "[render_3d]" )
+{
+    render_3d::camera cam = test_camera();
+    cam.origin_x = 137;   // arbitrary viewport center
+    cam.origin_y = -42;
+    const float plane_h = 0.125f;
+
+    for( int dy = -7; dy <= 7; dy += 2 ) {
+        for( int dx = -7; dx <= 7; dx += 3 ) {
+            // Project the middle of the cell's top surface and invert.
+            const render_3d::fpoint sp = render_3d::project(
+                                             cam, static_cast<float>( dx ) + 0.5f,
+                                             static_cast<float>( dy ) + 0.5f, plane_h );
+            float fdx = 0.0f;
+            float fdy = 0.0f;
+            render_3d::unproject( cam, sp.x, sp.y, plane_h, fdx, fdy );
+            INFO( "dx=" << dx << " dy=" << dy );
+            CHECK( fdx == Approx( static_cast<float>( dx ) + 0.5f ).margin( 0.001 ) );
+            CHECK( fdy == Approx( static_cast<float>( dy ) + 0.5f ).margin( 0.001 ) );
+            CHECK( static_cast<int>( std::floor( fdx ) ) == dx );
+            CHECK( static_cast<int>( std::floor( fdy ) ) == dy );
+        }
+    }
+
+    // The picking plane height matters: inverting at the wrong plane
+    // shifts the result diagonally.
+    const render_3d::fpoint sp = render_3d::project( cam, 0.5f, 0.5f, plane_h );
+    float fdx = 0.0f;
+    float fdy = 0.0f;
+    render_3d::unproject( cam, sp.x, sp.y, 0.0f, fdx, fdy );
+    CHECK( fdx < 0.5f );
+    CHECK( fdy < 0.5f );
 }
 
 TEST_CASE( "render_3d_depth_key_ordering", "[render_3d]" )

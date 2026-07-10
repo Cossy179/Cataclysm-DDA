@@ -4430,6 +4430,26 @@ void cata_tiles::void_cursor()
     do_draw_cursor = false;
     cursors.clear();
 }
+
+void cata_tiles::take_overlay_queues( std::vector<tripoint_bub_ms> &cursors_out,
+                                      std::vector<tripoint_bub_ms> &highlights_out )
+{
+    cursors_out.swap( cursors );
+    highlights_out.swap( highlights );
+    void_cursor();
+    void_highlight();
+    // Animations this renderer doesn't play must still be drained so they
+    // can't accumulate while the sprite renderer is inactive.
+    void_explosion();
+    void_custom_explosion();
+    void_bullet();
+    void_hit();
+    void_line();
+    void_weather();
+    void_sct();
+    void_zones();
+    void_async_anim();
+}
 void cata_tiles::void_highlight()
 {
     do_draw_highlight = false;

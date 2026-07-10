@@ -60,6 +60,17 @@ class world_renderer
         virtual void draw_world( const render_scene &scene,
                                  std::multimap<point, formatted_text> &overlay_strings,
                                  color_block_overlay_container &color_blocks ) = 0;
+
+        /**
+         * Map a terrain-window-relative pixel to the map cell drawn there,
+         * on the view-center z-plane — the inverse of this backend's
+         * projection, used for mouse picking.  `center` is the cell at the
+         * window center; the default implementation is the sprite
+         * renderer's ortho/iso conversion.
+         */
+        virtual point_bub_ms screen_to_map( const point &screen_pos, const point &tile_size,
+                                            const point &win_size,
+                                            const point_bub_ms &center ) const;
 };
 
 /** The backend selected by the WORLD_RENDERER display option. */

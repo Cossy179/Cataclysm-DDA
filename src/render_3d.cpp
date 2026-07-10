@@ -17,6 +17,18 @@ fpoint project( const camera &cam, const float dx, const float dy, const float d
     };
 }
 
+void unproject( const camera &cam, const float sx, const float sy, const float plane_h,
+                float &fdx, float &fdy )
+{
+    const float half_w = std::max( static_cast<float>( cam.half_w() ), 1.0f );
+    const float quarter_w = std::max( static_cast<float>( cam.quarter_w() ), 1.0f );
+    const float rx = ( sx - static_cast<float>( cam.origin_x ) ) / half_w;
+    const float ry = ( sy - static_cast<float>( cam.origin_y ) +
+                       plane_h * static_cast<float>( cam.block_h() ) ) / quarter_w;
+    fdx = ( rx + ry ) / 2.0f;
+    fdy = ( ry - rx ) / 2.0f;
+}
+
 float light_factor( const float ambient )
 {
     return std::clamp( 0.30f + 0.70f * std::min( ambient, 60.0f ) / 60.0f, 0.30f, 1.0f );

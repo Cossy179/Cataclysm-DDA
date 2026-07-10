@@ -69,6 +69,17 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
     avatar &you = get_avatar();
     CHECK( you.has_memory_at( here.get_abs( you.pos_bub() + tripoint::east ) ) );
 
+    // Mouse picking through the backend: the pixel at the window center
+    // maps to the view-center cell, and stepping a full tile width right
+    // moves one cell along the screen-right diagonal (+x, -y).
+    const point_bub_ms center_xy( you.pos_bub().xy() );
+    CHECK( wr.screen_to_map( point( view_size / 2, view_size / 2 ),
+                             point( 32, 32 ), point( view_size, view_size ),
+                             center_xy ) == center_xy );
+    CHECK( wr.screen_to_map( point( view_size / 2 + 32, view_size / 2 ),
+                             point( 32, 32 ), point( view_size, view_size ),
+                             center_xy ) == center_xy + point( 1, -1 ) );
+
     // And remembered terrain renders for unseen tiles: seal a cell behind
     // walls, plant a remembered wall inside, and draw again through the
     // memory path.

@@ -3762,6 +3762,23 @@ class block_3d_world_renderer : public world_renderer
             return "block_3d";
         }
 
+        point_bub_ms screen_to_map( const point &screen_pos, const point &/* tile_size */,
+                                    const point &win_size,
+                                    const point_bub_ms &center ) const override {
+            // Invert this backend's own projection on the ground plane
+            // (slab tops at 0.125 blocks), matching what the eye sees.
+            render_3d::camera cam;
+            cam.tile_width = std::max( tilecontext ? tilecontext->get_tile_width() : 32, 8 );
+            cam.origin_x = win_size.x / 2;
+            cam.origin_y = win_size.y / 2;
+            float fdx = 0.0f;
+            float fdy = 0.0f;
+            render_3d::unproject( cam, static_cast<float>( screen_pos.x ),
+                                  static_cast<float>( screen_pos.y ), 0.125f, fdx, fdy );
+            return center + point( static_cast<int>( std::floor( fdx ) ),
+                                   static_cast<int>( std::floor( fdy ) ) );
+        }
+
         void draw_world( const render_scene &scene,
                          std::multimap<point, formatted_text> &overlay_strings,
                          color_block_overlay_container &/* color_blocks */ ) override {
@@ -3893,6 +3910,27 @@ class block_3d_world_renderer : public world_renderer
                 push( draw_entry{ ppos.x() - center.x(), ppos.y() - center.y(),
                                   ppos.z() - center.z(), 0.125f, 0.0f,
                                   render_3d::rgba{ 255, 255, 255, 255 }, entry_kind::billboard } );
+            }
+
+            // Cursor and highlight overlays deferred by game::draw_cursor /
+            // draw_highlight; taking them also drains the animation queues
+            // only the sprite renderer plays, so nothing accumulates.
+            if( tilecontext ) {
+                cursor_scratch_.clear();
+                highlight_scratch_.clear();
+                tilecontext->take_overlay_queues( cursor_scratch_, highlight_scratch_ );
+                for( const tripoint_bub_ms &cp : cursor_scratch_ ) {
+                    push( draw_entry{ cp.x() - center.x(), cp.y() - center.y(),
+                                      cp.z() - center.z(), 0.125f, 0.0f,
+                                      render_3d::rgba{ 230, 255, 255, 230 },
+                                      entry_kind::billboard } );
+                }
+                for( const tripoint_bub_ms &hp : highlight_scratch_ ) {
+                    push( draw_entry{ hp.x() - center.x(), hp.y() - center.y(),
+                                      hp.z() - center.z(), 0.125f, 0.0f,
+                                      render_3d::rgba{ 255, 220, 60, 200 },
+                                      entry_kind::marker } );
+                }
             }
 
             verts_.clear();
@@ -4430,6 +4468,8 @@ class block_3d_world_renderer : public world_renderer
         std::vector<render_3d::vtx> verts_;
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
+        std::vector<tripoint_bub_ms> cursor_scratch_;
+        std::vector<tripoint_bub_ms> highlight_scratch_;
         render_3d::light_env env_;
         bool sun_up_ = false;
         int sun_step_x_ = 0;
@@ -4437,6 +4477,14 @@ class block_3d_world_renderer : public world_renderer
 };
 
 } // namespace
+
+point_bub_ms world_renderer::screen_to_map( const point &screen_pos, const point &tile_size,
+        const point &win_size, const point_bub_ms &center ) const
+{
+    // Default: the sprite renderer's ortho/iso conversion.
+    return cata_tiles::screen_to_player( screen_pos, tile_size, win_size, center,
+                                         g->is_tileset_isometric() );
+}
 
 world_renderer &get_active_world_renderer()
 {
@@ -7507,7 +7555,14 @@ std::optional<tripoint_bub_ms> input_context::get_coordinates( const catacurses:
         logical_tile_size = dim.scaled_font_size;
     }
 
-    const point_bub_ms p = cata_tiles::screen_to_player(
+    // The terrain window is drawn by the active world renderer, whose
+    // projection may differ from the sprite ortho/iso math — route its
+    // picking through the same backend.
+    const bool terrain_window = use_tiles && g && capture_win == g->w_terrain;
+    const point_bub_ms p = terrain_window
+                           ? get_active_world_renderer().screen_to_map(
+                               screen_pos, logical_tile_size, win_size, point_bub_ms( offset ) )
+                           : cata_tiles::screen_to_player(
                                screen_pos, logical_tile_size, win_size,
                                point_bub_ms( offset ), use_isometric );
 

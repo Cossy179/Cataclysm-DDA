@@ -807,6 +807,14 @@ class cata_tiles
         void init_draw_cursor( const tripoint_bub_ms &p );
         void draw_cursor();
         void void_cursor();
+        /**
+         * For non-sprite world renderers: move out the pending cursor and
+         * highlight positions and void all other deferred animation state,
+         * so the queues render through that backend instead of silently
+         * accumulating.
+         */
+        void take_overlay_queues( std::vector<tripoint_bub_ms> &cursors_out,
+                                  std::vector<tripoint_bub_ms> &highlights_out );
 
         void init_draw_highlight( const tripoint_bub_ms &p );
         void draw_highlight();

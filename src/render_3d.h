@@ -84,6 +84,15 @@ struct camera {
 fpoint project( const camera &cam, float dx, float dy, float dz_blocks );
 
 /**
+ * Inverse of project() on the center z-level at height plane_h: the
+ * fractional cell coordinates whose projection is the given screen point.
+ * The containing cell is the floor of the results.  Used for mouse
+ * picking.
+ */
+void unproject( const camera &cam, float sx, float sy, float plane_h,
+                float &fdx, float &fdy );
+
+/**
  * Painter's-order depth of cell (dx, dy, dz) relative to the view center;
  * larger is nearer the camera.  Exact for axis-aligned unit blocks because
  * block_h == tile_width / 2: blocks with equal keys can never overlap on
