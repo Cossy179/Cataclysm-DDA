@@ -556,6 +556,9 @@ struct formatted_text {
     formatted_text( const std::string &text, int color, direction text_direction );
 };
 
+/** Curses color index for a message type, as used by overlay text. */
+int msgtype_to_tilecolor( game_message_type type, bool bOldMsg );
+
 /** type used for color blocks overlays.
  * first: The SDL blend mode used for the color.
  * second:

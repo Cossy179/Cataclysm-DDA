@@ -95,6 +95,13 @@ float light_factor( float ambient );
 rgba shade( const rgba &c, float f );
 
 /**
+ * Tint for geometry drawn from map memory rather than live sight: dim and
+ * desaturated with a blue-gray cast, visually distinct from both lit and
+ * dark tiles.  Alpha unchanged.
+ */
+rgba memory_tint( const rgba &c );
+
+/**
  * Range of view-relative cells whose geometry can appear in a
  * width x height pixel viewport centered on the camera origin, expressed
  * on the diagonal lattice u = dx - dy, v = dx + dy.  z_below is how many
@@ -120,6 +127,14 @@ void emit_block( std::vector<vtx> &out, const camera &cam, int dx, int dy, int d
  */
 void emit_billboard( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
                      float foot_h, const rgba &color );
+
+/**
+ * Emit a small camera-facing diamond marker on cell (dx, dy, dz) at height
+ * foot_h, for items and traps: half the billboard's width, a third of its
+ * height.
+ */
+void emit_marker( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                  float foot_h, const rgba &color );
 
 } // namespace render_3d
 

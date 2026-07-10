@@ -151,6 +151,33 @@ TEST_CASE( "render_3d_block_emission", "[render_3d]" )
     out.clear();
     render_3d::emit_billboard( out, cam, 0, 0, 0, 0.0f, base );
     CHECK( out.size() == 6 );
+
+    // A marker is the same diamond shape at half width and a third height.
+    out.clear();
+    render_3d::emit_marker( out, cam, 0, 0, 0, 0.0f, base );
+    REQUIRE( out.size() == 6 );
+    // Foot is at the cell center; top is 0.5 block_h above it.
+    const render_3d::fpoint center_foot = render_3d::project( cam, 0.5f, 0.5f, 0.0f );
+    CHECK( out[0].x == center_foot.x );
+    CHECK( out[0].y == center_foot.y );
+    CHECK( out[0].y - out[2].y == 0.5f * static_cast<float>( cam.block_h() ) );
+    // Side points sit half the marker width from the center line.
+    CHECK( out[0].x - out[1].x == static_cast<float>( cam.half_w() ) / 4.0f );
+}
+
+TEST_CASE( "render_3d_memory_tint", "[render_3d]" )
+{
+    // Dim, desaturated, blue-shifted; alpha preserved; clamped.
+    const render_3d::rgba c{ 200, 100, 40, 200 };
+    const render_3d::rgba m = render_3d::memory_tint( c );
+    CHECK( m.r == 95 );   // 200 * 0.35 + 25
+    CHECK( m.g == 65 );   // 100 * 0.35 + 30
+    CHECK( m.b == 59 );   // 40 * 0.35 + 45
+    CHECK( m.a == 200 );
+
+    const render_3d::rgba white = render_3d::memory_tint( render_3d::rgba{ 255, 255, 255, 255 } );
+    CHECK( white.r < 255 );
+    CHECK( white.b > white.r );  // the blue cast survives even from white
 }
 
 TEST_CASE( "render_3d_light_factor", "[render_3d]" )

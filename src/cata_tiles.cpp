@@ -193,7 +193,7 @@ cata_shader::variant_kind compute_variant_kind( lit_level ll, bool use_nv_tiles 
 }
 #endif
 
-static int msgtype_to_tilecolor( const game_message_type type, const bool bOldMsg )
+int msgtype_to_tilecolor( const game_message_type type, const bool bOldMsg )
 {
     const int iBold = bOldMsg ? 0 : 8;
 

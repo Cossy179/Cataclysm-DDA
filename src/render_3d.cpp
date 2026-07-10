@@ -30,6 +30,15 @@ rgba shade( const rgba &c, const float f )
     return rgba{ mul( c.r, f ), mul( c.g, f ), mul( c.b, f ), c.a };
 }
 
+rgba memory_tint( const rgba &c )
+{
+    const auto mix = []( const uint8_t channel, const float bias ) {
+        return static_cast<uint8_t>( std::clamp( static_cast<float>( channel ) * 0.35f + bias,
+                                     0.0f, 255.0f ) );
+    };
+    return rgba{ mix( c.r, 25.0f ), mix( c.g, 30.0f ), mix( c.b, 45.0f ), c.a };
+}
+
 void visible_cell_bounds( const camera &cam, const int width, const int height,
                           const int z_below, int &u_min, int &u_max, int &v_min, int &v_max )
 {
@@ -85,14 +94,16 @@ void emit_block( std::vector<vtx> &out, const camera &cam, const int dx, const i
     }
 }
 
-void emit_billboard( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
-                     const int dz, const float foot_h, const rgba &color )
+namespace
+{
+
+void emit_diamond( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
+                   const int dz, const float foot_h, const float height, const float half_width,
+                   const rgba &color )
 {
     const fpoint foot = project( cam, static_cast<float>( dx ) + 0.5f,
                                  static_cast<float>( dy ) + 0.5f,
                                  static_cast<float>( dz ) + foot_h );
-    const float height = 1.5f * static_cast<float>( cam.block_h() );
-    const float half_width = static_cast<float>( cam.half_w() ) / 2.0f;
     const fpoint top{ foot.x, foot.y - height };
     const fpoint left{ foot.x - half_width, foot.y - height / 2.0f };
     const fpoint right{ foot.x + half_width, foot.y - height / 2.0f };
@@ -102,6 +113,24 @@ void emit_billboard( std::vector<vtx> &out, const camera &cam, const int dx, con
     out.push_back( vtx{ foot.x, foot.y, color } );
     out.push_back( vtx{ top.x, top.y, color } );
     out.push_back( vtx{ right.x, right.y, color } );
+}
+
+} // namespace
+
+void emit_billboard( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
+                     const int dz, const float foot_h, const rgba &color )
+{
+    emit_diamond( out, cam, dx, dy, dz, foot_h,
+                  1.5f * static_cast<float>( cam.block_h() ),
+                  static_cast<float>( cam.half_w() ) / 2.0f, color );
+}
+
+void emit_marker( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
+                  const int dz, const float foot_h, const rgba &color )
+{
+    emit_diamond( out, cam, dx, dy, dz, foot_h,
+                  0.5f * static_cast<float>( cam.block_h() ),
+                  static_cast<float>( cam.half_w() ) / 4.0f, color );
 }
 
 } // namespace render_3d
