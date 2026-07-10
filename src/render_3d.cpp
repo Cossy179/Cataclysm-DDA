@@ -40,25 +40,61 @@ rgba memory_tint( const rgba &c )
     return rgba{ mix( c.r, 25.0f ), mix( c.g, 30.0f ), mix( c.b, 45.0f ), c.a };
 }
 
-void sun_face_shading( const float azimuth_deg, const float altitude_deg, light_env &env )
+void sun_face_shading( const bool sun_up, const float shadow_x, const float shadow_y,
+                       light_env &env )
 {
-    if( altitude_deg <= 0.0f ) {
+    const float len = std::sqrt( shadow_x * shadow_x + shadow_y * shadow_y );
+    if( !sun_up || len <= 0.0f ) {
         // Sun below the horizon: flat, slightly cool moonlight.
         env.face_south = 0.72f;
         env.face_east = 0.66f;
         return;
     }
-    // Direction toward the sun in map coordinates (+x east, +y south),
-    // azimuth measured clockwise from north.
-    const float az = azimuth_deg * static_cast<float>( M_PI ) / 180.0f;
-    const float to_sun_x = std::sin( az );
-    const float to_sun_y = -std::cos( az );
+    // The sun lies opposite the shadow; only the direction matters (the
+    // engine's shadow vector scales with cot(altitude)).
+    const float to_sun_x = -shadow_x / len;
+    const float to_sun_y = -shadow_y / len;
     const auto face = []( const float facing_dot ) {
         return 0.60f + 0.28f * std::max( 0.0f, facing_dot );
     };
     // South faces have normal (0, 1); east faces have normal (1, 0).
     env.face_south = face( to_sun_y );
     env.face_east = face( to_sun_x );
+}
+
+void sun_step( const float shadow_x, const float shadow_y, int &step_x, int &step_y )
+{
+    step_x = 0;
+    step_y = 0;
+    const float to_sun_x = -shadow_x;
+    const float to_sun_y = -shadow_y;
+    // tan(22.5 degrees): a component participates in the 8-way step when
+    // the direction is within 22.5 degrees of its axis.
+    constexpr float threshold = 0.4142f;
+    if( std::abs( to_sun_x ) > threshold * std::abs( to_sun_y ) ) {
+        step_x = to_sun_x > 0.0f ? 1 : -1;
+    }
+    if( std::abs( to_sun_y ) > threshold * std::abs( to_sun_x ) ) {
+        step_y = to_sun_y > 0.0f ? 1 : -1;
+    }
+    if( to_sun_x == 0.0f && to_sun_y == 0.0f ) {
+        step_x = 0;
+        step_y = 0;
+    }
+}
+
+float sun_shadow_factor( const int first_blocker_distance )
+{
+    switch( first_blocker_distance ) {
+        case 1:
+            return 0.55f;
+        case 2:
+            return 0.72f;
+        case 3:
+            return 0.86f;
+        default:
+            return 1.0f;
+    }
 }
 
 void time_of_day_grading( const bool night, const bool dawn_or_dusk, light_env &env )
@@ -80,6 +116,37 @@ void time_of_day_grading( const bool night, const bool dawn_or_dusk, light_env &
     }
 }
 
+void weather_grading( const float sun_attenuation, const bool raining, const bool snowing,
+                      const bool foggy, light_env &env )
+{
+    // Overcast: darken by the sunlight deficit with a cool cast.
+    const float d = std::clamp( 1.0f - sun_attenuation, 0.0f, 1.0f );
+    env.grade_r *= 1.0f - 0.25f * d;
+    env.grade_g *= 1.0f - 0.15f * d;
+    env.grade_b *= 1.0f - 0.05f * d;
+    if( raining ) {
+        env.grade_r *= 0.90f;
+        env.grade_g *= 0.93f;
+    }
+    if( snowing ) {
+        env.grade_r *= 1.04f;
+        env.grade_g *= 1.06f;
+        env.grade_b *= 1.12f;
+    }
+    if( foggy ) {
+        env.grade_r *= 0.92f;
+        env.grade_g *= 0.92f;
+        env.grade_b *= 0.96f;
+    }
+}
+
+void night_vision_grading( light_env &env )
+{
+    env.grade_r = 0.35f;
+    env.grade_g = 1.15f;
+    env.grade_b = 0.45f;
+}
+
 rgba grade( const rgba &c, const light_env &env )
 {
     const auto mul = []( const uint8_t channel, const float factor ) {
@@ -87,6 +154,32 @@ rgba grade( const rgba &c, const light_env &env )
                                      0.0f, 255.0f ) );
     };
     return rgba{ mul( c.r, env.grade_r ), mul( c.g, env.grade_g ), mul( c.b, env.grade_b ), c.a };
+}
+
+rgba apply_light_color( const rgba &c, const float lr, const float lg, const float lb,
+                        const float scalar )
+{
+    // Mirrors the sprite renderer's colored-light overlay (the
+    // light_color_cache consumer in cata_tiles::draw): tint by the
+    // saturated component of the accumulated light, weighted by its share
+    // of the tile's total light energy, capped at 80/255.
+    const float min_ch = std::min( { lr, lg, lb } );
+    const float sat_r = lr - min_ch;
+    const float sat_g = lg - min_ch;
+    const float sat_b = lb - min_ch;
+    const float sat_mag = std::max( { sat_r, sat_g, sat_b } );
+    if( sat_mag < 0.01f || scalar <= 0.1f ) {
+        return c;
+    }
+    const float ratio = std::min( 1.0f, sat_mag / scalar );
+    const float w = ratio * 80.0f / 255.0f;
+    const auto mix = [w]( const uint8_t base, const float target ) {
+        return static_cast<uint8_t>( std::clamp(
+                                         static_cast<float>( base ) * ( 1.0f - w ) + target * w, 0.0f, 255.0f ) );
+    };
+    return rgba{ mix( c.r, sat_r / sat_mag * 255.0f ),
+                 mix( c.g, sat_g / sat_mag * 255.0f ),
+                 mix( c.b, sat_b / sat_mag * 255.0f ), c.a };
 }
 
 float corner_occlusion( const bool side_a, const bool side_b, const bool diagonal )

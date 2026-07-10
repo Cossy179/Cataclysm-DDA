@@ -178,11 +178,15 @@ Strictly layered on top of the Phase 3 raster renderer; every step optional and 
 - ✅ **Dynamic sun-direction shading**: the two visible side faces track the real sun azimuth through the day (`render_3d::sun_face_shading` driven by `sun_azimuth_altitude`) — east faces glow in the morning, south faces at midday, flat cool moonlight at night. Underground stays neutral.
 - ✅ **Time-of-day color grading**: cool blue nights, warm golden-hour dawn/dusk (`render_3d::time_of_day_grading`/`grade`), applied to terrain and creatures; memory and emissive tiles are exempt by design.
 - ✅ **Alpha blending + translucency**: the triangle batch now blends (`RenderTriangles` sets `SDL_BLENDMODE_BLEND`); fields render as translucent overlays.
-- ✅ **Emissive light sources**: light-emitting fields (fire) render ungraded and unshaded at full color with a translucent glow halo (`render_3d::emit_glow`), keyed off the field's real `light_emitted` value.
+- ✅ **Emissive light sources**: light-emitting fields (fire) render ungraded and unshaded at full color, keyed off the field's real `light_emitted` value, with a **three-layer soft bloom** of concentric translucent halos.
+- ✅ **Directional sun shadows (per-tile)**: outdoor ground tiles march up to three cells toward the sun (8-way snapped from `sunlight_angle`'s shadow vector); a wall on the way casts soft shade, nearer = darker (`render_3d::sun_step`/`sun_shadow_factor`, multiplied into the AO corners). The engine's lightmap has no directional sun shadowing, so this is new visual information. This work also **fixed an azimuth-convention bug**: the engine measures azimuth from south positive-west, so the earlier face shading lit east faces in the evening; `sun_face_shading` now takes the engine's shadow vector directly.
+- ✅ **Weather color grading**: overcast darkens with a cool cast scaled by the real sunlight attenuation (`incident_sunlight`/`sun_light_at`), rain cools, snow brightens blue, fog desaturates (`render_3d::weather_grading`, composing multiplicatively with time-of-day grading).
+- ✅ **Night-vision tint**: phosphor-green grading when NV goggles are active (`get_vision_modes()[NV_GOGGLES]`, the same bit the sprite renderer keys on).
+- ✅ **Colored light**: per-tile accumulated colored light (`level_cache.light_color_cache`) tints lit tiles and sprites using the sprite renderer's exact overlay formula (`render_3d::apply_light_color`), gated on `has_colored_lights`.
 
 Staged next steps, in order of payoff-per-effort:
 
-1. **Cast shadows** — true directional shadow volumes/maps for sun and point lights need the GPU backend (depth buffer); the current AO + engine lightmap covers contact and roof shadows.
+1. **Cast shadows (full)** — true shadow volumes/maps with proper penumbras and point-light shadows need the GPU backend (depth buffer); the current per-tile directional shade + AO + engine lightmap covers the common cases.
 2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits. Pairs with tileset-textured faces.
 3. **Screen-space effects** — SSAO (full-screen), bloom (explosions, portal storms), weather-driven grading.
 4. **Global illumination** — start with baked/irradiance approximations per chunk; the fully static terrain between bashes makes caching viable.

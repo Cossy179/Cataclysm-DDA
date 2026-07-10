@@ -169,21 +169,128 @@ TEST_CASE( "render_3d_sun_face_shading", "[render_3d]" )
 {
     render_3d::light_env env;
 
-    // Morning sun in the east: east faces brighter than south faces.
-    render_3d::sun_face_shading( 90.0f, 30.0f, env );
+    // Morning sun in the east: shadows point west (-x), so east faces
+    // brighten and south faces stay at the base level.
+    render_3d::sun_face_shading( true, -2.0f, 0.0f, env );
     CHECK( env.face_east > env.face_south );
     CHECK( env.face_east == Approx( 0.88f ) );
     CHECK( env.face_south == Approx( 0.60f ) );
 
-    // Midday sun in the south: south faces brighter.
-    render_3d::sun_face_shading( 180.0f, 60.0f, env );
+    // Midday sun in the south: shadows point north (-y); south faces bright.
+    render_3d::sun_face_shading( true, 0.0f, -1.0f, env );
     CHECK( env.face_south > env.face_east );
     CHECK( env.face_south == Approx( 0.88f ) );
 
+    // The shadow vector's magnitude (cot altitude) must not matter.
+    render_3d::light_env env_long;
+    render_3d::sun_face_shading( true, 0.0f, -50.0f, env_long );
+    CHECK( env_long.face_south == Approx( env.face_south ) );
+
     // Night: flat moonlit values, south slightly brighter than east.
-    render_3d::sun_face_shading( 0.0f, -10.0f, env );
+    render_3d::sun_face_shading( false, 0.0f, 0.0f, env );
     CHECK( env.face_south == Approx( 0.72f ) );
     CHECK( env.face_east == Approx( 0.66f ) );
+}
+
+TEST_CASE( "render_3d_sun_step", "[render_3d]" )
+{
+    int sx = 9;
+    int sy = 9;
+    // Shadow west -> sun east -> step east.
+    render_3d::sun_step( -1.0f, 0.0f, sx, sy );
+    CHECK( sx == 1 );
+    CHECK( sy == 0 );
+    // Shadow north -> sun south.
+    render_3d::sun_step( 0.0f, -1.0f, sx, sy );
+    CHECK( sx == 0 );
+    CHECK( sy == 1 );
+    // Shadow north-west -> sun south-east (diagonal).
+    render_3d::sun_step( -1.0f, -1.0f, sx, sy );
+    CHECK( sx == 1 );
+    CHECK( sy == 1 );
+    // Nearly axial: the small component is ignored below the 22.5° cone.
+    render_3d::sun_step( -1.0f, -0.2f, sx, sy );
+    CHECK( sx == 1 );
+    CHECK( sy == 0 );
+    // Zero shadow -> no step.
+    render_3d::sun_step( 0.0f, 0.0f, sx, sy );
+    CHECK( sx == 0 );
+    CHECK( sy == 0 );
+}
+
+TEST_CASE( "render_3d_sun_shadow_factor", "[render_3d]" )
+{
+    CHECK( render_3d::sun_shadow_factor( 1 ) == Approx( 0.55f ) );
+    CHECK( render_3d::sun_shadow_factor( 2 ) == Approx( 0.72f ) );
+    CHECK( render_3d::sun_shadow_factor( 3 ) == Approx( 0.86f ) );
+    CHECK( render_3d::sun_shadow_factor( 0 ) == 1.0f );
+    CHECK( render_3d::sun_shadow_factor( -1 ) == 1.0f );
+    CHECK( render_3d::sun_shadow_factor( 4 ) == 1.0f );
+    CHECK( render_3d::sun_shadow_factor( 1 ) < render_3d::sun_shadow_factor( 2 ) );
+    CHECK( render_3d::sun_shadow_factor( 2 ) < render_3d::sun_shadow_factor( 3 ) );
+}
+
+TEST_CASE( "render_3d_weather_grading", "[render_3d]" )
+{
+    // Full sun, no precipitation: identity.
+    render_3d::light_env env;
+    render_3d::weather_grading( 1.0f, false, false, false, env );
+    CHECK( env.grade_r == Approx( 1.0f ) );
+    CHECK( env.grade_g == Approx( 1.0f ) );
+    CHECK( env.grade_b == Approx( 1.0f ) );
+
+    // Heavy overcast: red drops the most, blue the least (cool cast).
+    render_3d::weather_grading( 0.3f, false, false, false, env );
+    CHECK( env.grade_r < env.grade_g );
+    CHECK( env.grade_g < env.grade_b );
+    CHECK( env.grade_r == Approx( 1.0f - 0.25f * 0.7f ) );
+
+    // Snow brightens blue relative to red.
+    render_3d::light_env snow_env;
+    render_3d::weather_grading( 1.0f, false, true, false, snow_env );
+    CHECK( snow_env.grade_b > snow_env.grade_r );
+    CHECK( snow_env.grade_b == Approx( 1.12f ) );
+
+    // Composes multiplicatively with existing (dusk) grades.
+    render_3d::light_env dusk_env;
+    render_3d::time_of_day_grading( false, true, dusk_env );
+    const float dusk_r = dusk_env.grade_r;
+    render_3d::weather_grading( 1.0f, true, false, false, dusk_env );
+    CHECK( dusk_env.grade_r == Approx( dusk_r * 0.90f ) );
+}
+
+TEST_CASE( "render_3d_night_vision_grading", "[render_3d]" )
+{
+    render_3d::light_env env;
+    render_3d::night_vision_grading( env );
+    CHECK( env.grade_g > 1.0f );
+    CHECK( env.grade_r < env.grade_g );
+    CHECK( env.grade_b < env.grade_g );
+    const render_3d::rgba gray = render_3d::grade( render_3d::rgba{ 100, 100, 100, 255 }, env );
+    CHECK( gray.g > gray.r );
+    CHECK( gray.g > gray.b );
+}
+
+TEST_CASE( "render_3d_apply_light_color", "[render_3d]" )
+{
+    const render_3d::rgba base{ 100, 100, 100, 200 };
+
+    // White (unsaturated) light: unchanged.
+    const render_3d::rgba white = render_3d::apply_light_color( base, 5.0f, 5.0f, 5.0f, 10.0f );
+    CHECK( white.r == 100 );
+    CHECK( white.g == 100 );
+    CHECK( white.b == 100 );
+
+    // Negligible total light: unchanged.
+    const render_3d::rgba dark = render_3d::apply_light_color( base, 1.0f, 0.0f, 0.0f, 0.05f );
+    CHECK( dark.r == 100 );
+
+    // Pure red light saturating the tile's light: lerp toward red by 80/255.
+    const render_3d::rgba red = render_3d::apply_light_color( base, 8.0f, 0.0f, 0.0f, 8.0f );
+    const float w = 80.0f / 255.0f;
+    CHECK( red.r == static_cast<uint8_t>( 100 * ( 1.0f - w ) + 255.0f * w ) );
+    CHECK( red.g == static_cast<uint8_t>( 100 * ( 1.0f - w ) ) );
+    CHECK( red.a == 200 );
 }
 
 TEST_CASE( "render_3d_time_of_day_grading", "[render_3d]" )

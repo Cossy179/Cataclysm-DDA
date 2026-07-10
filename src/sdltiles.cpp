@@ -79,6 +79,8 @@
 #include "trap.h"
 #include "vehicle.h"
 #include "vpart_position.h"
+#include "weather.h"
+#include "weather_type.h"
 #include "npc.h"
 #include "options.h"
 #include "output.h"
@@ -3783,19 +3785,42 @@ class block_3d_world_renderer : public world_renderer
             // recovery); don't let cached dimensions outlive the frame.
             sheet_dims_.clear();
 
-            // Per-frame lighting environment: sun-direction face shading
-            // and time-of-day color grading. Underground keeps the neutral
-            // defaults — no sun to point at.
+            // Per-frame lighting environment: sun-direction face shading,
+            // directional shadow marching direction, and color grading from
+            // time of day, weather and night vision. Underground keeps the
+            // neutral defaults — no sun to point at.
             env_ = render_3d::light_env{};
+            sun_up_ = false;
+            sun_step_x_ = 0;
+            sun_step_y_ = 0;
             if( center.z() >= 0 ) {
-                const std::pair<units::angle, units::angle> sun =
-                    sun_azimuth_altitude( calendar::turn );
-                render_3d::sun_face_shading(
-                    static_cast<float>( to_degrees( sun.first ) ),
-                    static_cast<float>( to_degrees( sun.second ) ), env_ );
-                render_3d::time_of_day_grading(
-                    is_night( calendar::turn ),
-                    is_dawn( calendar::turn ) || is_dusk( calendar::turn ), env_ );
+                const std::optional<rl_vec2d> shadow = sunlight_angle( calendar::turn );
+                sun_up_ = shadow.has_value();
+                render_3d::sun_face_shading( sun_up_, sun_up_ ? shadow->x : 0.0f,
+                                             sun_up_ ? shadow->y : 0.0f, env_ );
+                if( sun_up_ ) {
+                    render_3d::sun_step( shadow->x, shadow->y, sun_step_x_, sun_step_y_ );
+                }
+                if( you.get_vision_modes()[NV_GOGGLES] ) {
+                    render_3d::night_vision_grading( env_ );
+                } else {
+                    render_3d::time_of_day_grading(
+                        is_night( calendar::turn ),
+                        is_dawn( calendar::turn ) || is_dusk( calendar::turn ), env_ );
+                    const weather_type &wt = get_weather().weather_id.obj();
+                    const float raw_sun = sun_light_at( calendar::turn );
+                    const float attenuation = sun_up_ && raw_sun > 0.0f
+                                              ? std::clamp( incident_sunlight( get_weather().weather_id,
+                                                            calendar::turn ) / raw_sun, 0.0f, 1.0f )
+                                              : 1.0f;
+                    const bool raining = wt.rains && wt.precip >= precip_class::light;
+                    const bool snowing = !wt.rains && wt.precip != precip_class::none;
+                    // sight_penalty baseline is 1.0 in weather JSON; fog and
+                    // mist sit at 1.3+ with no precipitation.
+                    const bool foggy = wt.sight_penalty >= 1.25f &&
+                                       wt.precip == precip_class::none;
+                    render_3d::weather_grading( attenuation, raining, snowing, foggy, env_ );
+                }
             }
 
             int u_min = 0;
@@ -4025,10 +4050,37 @@ class block_3d_world_renderer : public world_renderer
                     return 0.0f;
                 }
             }
+            // Accumulated colored light at this tile (fires, colored
+            // lamps), consumed with the same semantics the sprite renderer
+            // uses for its light_color_cache overlay.
+            bool has_light_color = false;
+            float lc_r = 0.0f;
+            float lc_g = 0.0f;
+            float lc_b = 0.0f;
+            float lc_scalar = 0.0f;
+            if( true_colors ) {
+                const level_cache &zch = here.access_cache( p.z() );
+                if( zch.has_colored_lights ) {
+                    const light_color_rgb &lc = zch.light_color_cache[p.x()][p.y()];
+                    if( lc.is_colored() ) {
+                        has_light_color = true;
+                        lc_r = lc.r;
+                        lc_g = lc.g;
+                        lc_b = lc.b;
+                        lc_scalar = zch.lm[p.x()][p.y()].max();
+                    }
+                }
+            }
+            const auto lit_color = [&]( const render_3d::rgba & c ) {
+                const render_3d::rgba graded =
+                    render_3d::grade( render_3d::shade( c, light ), env_ );
+                return has_light_color
+                       ? render_3d::apply_light_color( graded, lc_r, lc_g, lc_b, lc_scalar )
+                       : graded;
+            };
             const auto tile_color = [&]( const nc_color & c ) {
                 return true_colors
-                       ? render_3d::grade(
-                           render_3d::shade( to_rgba( curses_color_to_SDL( c ) ), light ), env_ )
+                       ? lit_color( to_rgba( curses_color_to_SDL( c ) ) )
                        : base;
             };
 
@@ -4039,8 +4091,7 @@ class block_3d_world_renderer : public world_renderer
             // texture's own colors carry through the lighting pipeline.
             const auto sprite_tint = [&]() {
                 return true_colors
-                       ? render_3d::grade(
-                           render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ )
+                       ? lit_color( render_3d::rgba{ 255, 255, 255, 255 } )
                        : base;
             };
             const auto attach_sprite = [&]( draw_entry & e, const std::string & id ) {
@@ -4072,17 +4123,25 @@ class block_3d_world_renderer : public world_renderer
                                   entry_kind::block };
                     if( true_colors ) {
                         e.ao = top_corner_ao( here, p );
+                        const float shadow = sun_shadow_at( here, p );
+                        for( float &ao : e.ao ) {
+                            ao *= shadow;
+                        }
                     }
                     attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
                 } else {
                     // Walkable ground: a thin slab with contact shadows
-                    // where walls wrap around it.
+                    // where walls wrap around it and directional sun shade.
                     top_h = 0.125f;
                     draw_entry e{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
                                   entry_kind::block };
                     if( true_colors ) {
                         e.ao = top_corner_ao( here, p );
+                        const float shadow = sun_shadow_at( here, p );
+                        for( float &ao : e.ao ) {
+                            ao *= shadow;
+                        }
                     }
                     attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
@@ -4116,9 +4175,16 @@ class block_3d_world_renderer : public world_renderer
                         render_3d::rgba fld_color;
                         if( emissive ) {
                             fld_color = to_rgba( curses_color_to_SDL( fe->color() ) );
+                            // Layered soft bloom: three concentric halos.
                             render_3d::rgba halo = fld_color;
-                            halo.a = 70;
-                            push( draw_entry{ dx, dy, dz, fld_top, 2.0f, halo,
+                            halo.a = 90;
+                            push( draw_entry{ dx, dy, dz, fld_top, 1.3f, halo,
+                                              entry_kind::glow } );
+                            halo.a = 50;
+                            push( draw_entry{ dx, dy, dz, fld_top, 2.1f, halo,
+                                              entry_kind::glow } );
+                            halo.a = 26;
+                            push( draw_entry{ dx, dy, dz, fld_top, 3.0f, halo,
                                               entry_kind::glow } );
                         } else {
                             fld_color = tile_color( fe->color() );
@@ -4146,6 +4212,23 @@ class block_3d_world_renderer : public world_renderer
 
         static bool occludes_at( map &here, const tripoint_bub_ms &p ) {
             return here.inbounds( p ) && here.impassable( p ) && !here.is_transparent( p );
+        }
+
+        // Directional sun shadow: outdoor tiles march up to three cells
+        // toward the sun; a wall on the way casts soft shade, nearer =
+        // darker. The engine's own lightmap has no directional sun
+        // shadowing, so this is purely visual information.
+        float sun_shadow_at( map &here, const tripoint_bub_ms &p ) const {
+            if( !sun_up_ || ( sun_step_x_ == 0 && sun_step_y_ == 0 ) ||
+                !here.access_cache( p.z() ).outside_cache[p.x()][p.y()] ) {
+                return 1.0f;
+            }
+            for( int k = 1; k <= 3; k++ ) {
+                if( occludes_at( here, p + point( k * sun_step_x_, k * sun_step_y_ ) ) ) {
+                    return render_3d::sun_shadow_factor( k );
+                }
+            }
+            return 1.0f;
         }
 
         // Classic voxel contact shadows: darken top-face corners that
@@ -4348,6 +4431,9 @@ class block_3d_world_renderer : public world_renderer
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
         render_3d::light_env env_;
+        bool sun_up_ = false;
+        int sun_step_x_ = 0;
+        int sun_step_y_ = 0;
 };
 
 } // namespace

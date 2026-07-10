@@ -112,15 +112,53 @@ struct light_env {
 };
 
 /**
- * Point the side-face brightness at the sun: faces turned toward the sun's
- * azimuth brighten, faces away darken.  Below the horizon (night) both
- * faces get flat, slightly cool moonlit values.  Azimuth is degrees
- * clockwise from north.
+ * Point the side-face brightness at the sun: faces turned toward the sun
+ * brighten, faces away darken.  shadow_x/y is the engine's ground shadow
+ * vector (calendar sunlight_angle(): the shadow cast per unit of blocker
+ * height, +x east, +y south) — the sun lies opposite it; only its
+ * direction is used.  When !sun_up (night) both faces get flat, slightly
+ * cool moonlit values and the vector is ignored.
  */
-void sun_face_shading( float azimuth_deg, float altitude_deg, light_env &env );
+void sun_face_shading( bool sun_up, float shadow_x, float shadow_y, light_env &env );
+
+/**
+ * Snap the toward-sun direction (opposite the shadow vector) to a unit
+ * 8-way grid step for shadow marching.  A component is set when it lies
+ * within 22.5 degrees of that axis.  A zero shadow yields (0, 0).
+ */
+void sun_step( float shadow_x, float shadow_y, int &step_x, int &step_y );
+
+/**
+ * Soft directional shadow factor from the nearest sun-ward occluder:
+ * distance 1 -> 0.55, 2 -> 0.72, 3 -> 0.86; anything else -> 1.0.
+ */
+float sun_shadow_factor( int first_blocker_distance );
 
 /** Color-temperature grading for the time of day; day is identity. */
 void time_of_day_grading( bool night, bool dawn_or_dusk, light_env &env );
+
+/**
+ * Weather cast, multiplied into the existing grading (composes with
+ * time_of_day_grading).  sun_attenuation is incident/raw sunlight in
+ * 0..1; the deficit drives a cool overcast darkening, and rain, snow and
+ * fog add their own casts.
+ */
+void weather_grading( float sun_attenuation, bool raining, bool snowing, bool foggy,
+                      light_env &env );
+
+/**
+ * Night-vision goggles: replace the grading with phosphor green.  Face
+ * brightness is left untouched.
+ */
+void night_vision_grading( light_env &env );
+
+/**
+ * Tint a lit tile color by the accumulated colored light at the tile,
+ * matching the sprite renderer's overlay semantics: lerp toward the
+ * normalized saturated component of (lr, lg, lb) weighted by how much of
+ * the tile's total light (scalar) is saturated.  Alpha unchanged.
+ */
+rgba apply_light_color( const rgba &c, float lr, float lg, float lb, float scalar );
 
 /** Apply the environment's grading multipliers to a color (alpha unchanged). */
 rgba grade( const rgba &c, const light_env &env );
