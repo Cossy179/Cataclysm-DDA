@@ -23,11 +23,25 @@ struct rgba {
     uint8_t a = 255;
 };
 
-/** A screen-space triangle vertex; triples of these form triangles. */
+/**
+ * A screen-space triangle vertex; triples of these form triangles.  u/v are
+ * normalized texture coordinates, meaningful only when the batch is drawn
+ * with a texture; color modulates the texture.
+ */
 struct vtx {
     float x = 0.0f;
     float y = 0.0f;
     rgba c;
+    float u = 0.0f;
+    float v = 0.0f;
+};
+
+/** Normalized source rectangle of a sprite within its atlas sheet. */
+struct sprite_uv {
+    float u0 = 0.0f;
+    float v0 = 0.0f;
+    float u1 = 1.0f;
+    float v1 = 1.0f;
 };
 
 struct fpoint {
@@ -170,6 +184,29 @@ void emit_block( std::vector<vtx> &out, const camera &cam, int dx, int dy, int d
 void emit_block_shaded( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
                         float base_h, float top_h, const rgba &color,
                         const block_shading &shading );
+
+/** Only the two camera-visible side faces of a block. */
+void emit_block_sides( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                       float base_h, float top_h, const rgba &color,
+                       float south, float east );
+
+/**
+ * A block's top face carrying a sprite laid flat across the cell (sprite
+ * top-left at the cell's north corner), tinted by `tint`, with per-corner
+ * ambient occlusion.  Emit into a batch drawn with the sprite's atlas
+ * texture.
+ */
+void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                              float top_h, const rgba &tint, const std::array<float, 4> &ao,
+                              const sprite_uv &uv );
+
+/**
+ * A camera-facing upright sprite standing on cell (dx, dy, dz) at height
+ * foot_h — creatures with their real tileset sprites.  aspect is the
+ * sprite's height/width ratio; the quad is 0.75 tile widths wide.
+ */
+void emit_sprite_billboard( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                            float foot_h, float aspect, const rgba &tint, const sprite_uv &uv );
 
 /**
  * Emit a camera-facing vertical diamond standing on cell (dx, dy, dz) at

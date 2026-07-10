@@ -609,6 +609,12 @@ void RenderCopyEx( const SDL_Renderer_Ptr &renderer, SDL_Texture *const texture,
 void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *const verts,
                       const int count )
 {
+    RenderTriangles( renderer, nullptr, verts, count );
+}
+
+void RenderTriangles( const SDL_Renderer_Ptr &renderer, SDL_Texture *const texture,
+                      const render_3d::vtx *const verts, const int count )
+{
     if( !renderer ) {
         dbg( D_ERROR ) << "Tried to render to a null renderer";
         return;
@@ -629,6 +635,8 @@ void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *co
         SDL_Vertex v{};
         v.position.x = verts[i].x;
         v.position.y = verts[i].y;
+        v.tex_coord.x = verts[i].u;
+        v.tex_coord.y = verts[i].v;
 #if SDL_MAJOR_VERSION >= 3
         v.color.r = static_cast<float>( verts[i].c.r ) / 255.0f;
         v.color.g = static_cast<float>( verts[i].c.g ) / 255.0f;
@@ -643,11 +651,11 @@ void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *co
         scratch.push_back( v );
     }
 #if SDL_MAJOR_VERSION >= 3
-    printErrorIf( !SDL_RenderGeometry( renderer.get(), nullptr, scratch.data(), count, nullptr,
+    printErrorIf( !SDL_RenderGeometry( renderer.get(), texture, scratch.data(), count, nullptr,
                                        0 ),
                   "SDL_RenderGeometry failed" );
 #else
-    printErrorIf( SDL_RenderGeometry( renderer.get(), nullptr, scratch.data(), count, nullptr,
+    printErrorIf( SDL_RenderGeometry( renderer.get(), texture, scratch.data(), count, nullptr,
                                       0 ) != 0,
                   "SDL_RenderGeometry failed" );
 #endif

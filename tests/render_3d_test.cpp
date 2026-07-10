@@ -260,6 +260,60 @@ TEST_CASE( "render_3d_shaded_block_emission", "[render_3d]" )
     CHECK( out[0].c.a == 80 );
 }
 
+TEST_CASE( "render_3d_textured_emission", "[render_3d]" )
+{
+    const render_3d::camera cam = test_camera();
+    const render_3d::rgba tint{ 255, 255, 255, 255 };
+    const render_3d::sprite_uv uv{ 0.25f, 0.5f, 0.5f, 0.75f };
+
+    // Textured top face: sprite corners land on the cell's diamond corners.
+    std::vector<render_3d::vtx> out;
+    const std::array<float, 4> no_ao = { 1.0f, 1.0f, 1.0f, 1.0f };
+    render_3d::emit_block_top_textured( out, cam, 0, 0, 0, 1.0f, tint, no_ao, uv );
+    REQUIRE( out.size() == 6 );
+    // Vertex order: n, e, s, n, s, w.
+    CHECK( out[0].u == 0.25f );  // north = sprite top-left
+    CHECK( out[0].v == 0.5f );
+    CHECK( out[1].u == 0.5f );   // east = sprite top-right
+    CHECK( out[1].v == 0.5f );
+    CHECK( out[2].u == 0.5f );   // south = sprite bottom-right
+    CHECK( out[2].v == 0.75f );
+    CHECK( out[5].u == 0.25f );  // west = sprite bottom-left
+    CHECK( out[5].v == 0.75f );
+    const render_3d::fpoint north = render_3d::project( cam, 0.0f, 0.0f, 1.0f );
+    CHECK( out[0].x == north.x );
+    CHECK( out[0].y == north.y );
+
+    // Sides alone are two faces, twelve vertices.
+    out.clear();
+    render_3d::emit_block_sides( out, cam, 0, 0, 0, 0.0f, 1.0f, tint, 0.8f, 0.6f );
+    CHECK( out.size() == 12 );
+    // Zero-height blocks have no sides.
+    out.clear();
+    render_3d::emit_block_sides( out, cam, 0, 0, 0, 0.5f, 0.5f, tint, 0.8f, 0.6f );
+    CHECK( out.empty() );
+
+    // Sprite billboard: upright quad, aspect controls its height.
+    out.clear();
+    render_3d::emit_sprite_billboard( out, cam, 0, 0, 0, 0.0f, 2.0f, tint, uv );
+    REQUIRE( out.size() == 6 );
+    const float width = 0.75f * static_cast<float>( cam.tile_width );
+    // Vertex order: tl, tr, br, tl, br, bl.
+    CHECK( out[1].x - out[0].x == width );
+    CHECK( out[2].y - out[1].y == width * 2.0f );
+    CHECK( out[0].u == 0.25f );
+    CHECK( out[0].v == 0.5f );
+    CHECK( out[2].u == 0.5f );
+    CHECK( out[2].v == 0.75f );
+
+    // Untextured vertices default to uv (0, 0).
+    out.clear();
+    render_3d::emit_marker( out, cam, 0, 0, 0, 0.0f, tint );
+    REQUIRE( !out.empty() );
+    CHECK( out[0].u == 0.0f );
+    CHECK( out[0].v == 0.0f );
+}
+
 TEST_CASE( "render_3d_memory_tint", "[render_3d]" )
 {
     // Dim, desaturated, blue-shifted; alpha preserved; clamped.

@@ -73,6 +73,8 @@
 #include "mapbuffer.h"
 #include "mapdata.h"
 #include "mission.h"
+#include "monster.h"
+#include "mtype.h"
 #include "submap.h"
 #include "trap.h"
 #include "vehicle.h"
@@ -3777,6 +3779,10 @@ class block_3d_world_renderer : public world_renderer
             const int draw_min_z = std::max( you.posz() - fov_3d_z_range, -OVERMAP_DEPTH );
             const int z_below = center.z() - draw_min_z;
 
+            // Atlas sheets can be rebuilt (tileset reload, renderer
+            // recovery); don't let cached dimensions outlive the frame.
+            sheet_dims_.clear();
+
             // Per-frame lighting environment: sun-direction face shading
             // and time-of-day color grading. Underground keeps the neutral
             // defaults — no sun to point at.
@@ -3865,12 +3871,28 @@ class block_3d_world_renderer : public world_renderer
             }
 
             verts_.clear();
+            runs_.clear();
+            const auto begin_run = [&]( SDL_Texture * tex ) {
+                if( !runs_.empty() && runs_.back().tex == tex ) {
+                    return;
+                }
+                if( !runs_.empty() ) {
+                    runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
+                }
+                runs_.push_back( tex_run{ tex, static_cast<int>( verts_.size() ), 0 } );
+            };
             for( const std::vector<draw_entry> &bucket : buckets_ ) {
+                // Colored geometry first, then sprites grouped by atlas
+                // sheet: entries within one depth bucket never overlap, so
+                // regrouping is order-safe and keeps texture switches rare.
+                begin_run( nullptr );
                 for( const draw_entry &e : bucket ) {
                     switch( e.kind ) {
                         case entry_kind::billboard:
-                            render_3d::emit_billboard( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
-                                                       e.color );
+                            if( e.tex == nullptr ) {
+                                render_3d::emit_billboard( verts_, cam, e.dx, e.dy, e.dz,
+                                                           e.base_h, e.color );
+                            }
                             break;
                         case entry_kind::marker:
                             render_3d::emit_marker( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
@@ -3881,15 +3903,36 @@ class block_3d_world_renderer : public world_renderer
                                                   e.top_h, e.color );
                             break;
                         case entry_kind::block:
-                        default: {
-                            const render_3d::block_shading shading{ e.ao, env_.face_south,
-                                                                    env_.face_east };
-                            render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
-                                                          e.base_h, e.top_h, e.color, shading );
+                        default:
+                            if( e.tex == nullptr ) {
+                                const render_3d::block_shading shading{ e.ao, env_.face_south,
+                                                                        env_.face_east };
+                                render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
+                                                              e.base_h, e.top_h, e.color, shading );
+                            } else {
+                                render_3d::emit_block_sides( verts_, cam, e.dx, e.dy, e.dz,
+                                                             e.base_h, e.top_h, e.color,
+                                                             env_.face_south, env_.face_east );
+                            }
                             break;
-                        }
                     }
                 }
+                for( const draw_entry &e : bucket ) {
+                    if( e.tex == nullptr ) {
+                        continue;
+                    }
+                    begin_run( e.tex );
+                    if( e.kind == entry_kind::block ) {
+                        render_3d::emit_block_top_textured( verts_, cam, e.dx, e.dy, e.dz,
+                                                            e.top_h, e.tint, e.ao, e.uv );
+                    } else if( e.kind == entry_kind::billboard ) {
+                        render_3d::emit_sprite_billboard( verts_, cam, e.dx, e.dy, e.dz,
+                                                          e.base_h, e.aspect, e.tint, e.uv );
+                    }
+                }
+            }
+            if( !runs_.empty() ) {
+                runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
             }
 
             emit_sct_overlay( cam, scene.dest, center, overlay_strings );
@@ -3897,7 +3940,11 @@ class block_3d_world_renderer : public world_renderer
             const SDL_Rect viewport{ scene.dest.x, scene.dest.y, scene.width, scene.height };
             geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
             RenderSetClipRect( renderer, &viewport );
-            RenderTriangles( renderer, verts_.data(), static_cast<int>( verts_.size() ) );
+            for( const tex_run &run : runs_ ) {
+                if( run.count > 0 ) {
+                    RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
+                }
+            }
             RenderSetClipRect( renderer, nullptr );
         }
 
@@ -3922,6 +3969,18 @@ class block_3d_world_renderer : public world_renderer
             entry_kind kind = entry_kind::block;
             // Top-face corner ambient occlusion (blocks only).
             std::array<float, 4> ao = { 1.0f, 1.0f, 1.0f, 1.0f };
+            // Tileset sprite for a block's top face or a billboard; null
+            // falls back to flat colors. tint modulates the sprite.
+            SDL_Texture *tex = nullptr;
+            render_3d::sprite_uv uv{};
+            render_3d::rgba tint{};
+            float aspect = 1.0f;
+        };
+
+        struct tex_run {
+            SDL_Texture *tex = nullptr;
+            int begin = 0;
+            int count = 0;
         };
 
         static render_3d::rgba to_rgba( const SDL_Color &c ) {
@@ -3935,7 +3994,7 @@ class block_3d_world_renderer : public world_renderer
         template<typename PushFn>
         float emit_tile( map &here, avatar &you, const tripoint_bub_ms &p, const int dx,
                          const int dy, const int dz, const visibility_type vis,
-                         const PushFn &push ) const {
+                         const PushFn &push ) {
             float light = 1.0f;
             render_3d::rgba base;
             bool true_colors = false;
@@ -3976,6 +4035,19 @@ class block_3d_world_renderer : public world_renderer
             if( true_colors ) {
                 memorize_tile( here, you, p );
             }
+            // Sprite tint: white modulated by light and grading, so the
+            // texture's own colors carry through the lighting pipeline.
+            const auto sprite_tint = [&]() {
+                return true_colors
+                       ? render_3d::grade(
+                           render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ )
+                       : base;
+            };
+            const auto attach_sprite = [&]( draw_entry & e, const std::string & id ) {
+                if( sprite_for( id, e.tex, e.uv, e.aspect ) ) {
+                    e.tint = sprite_tint();
+                }
+            };
 
             const bool open_air = here.is_open_air( p );
             float top_h = 0.0f;
@@ -3983,8 +4055,10 @@ class block_3d_world_renderer : public world_renderer
                 if( here.impassable( p ) && !here.is_transparent( p ) ) {
                     // Full wall.
                     top_h = 1.0f;
-                    push( draw_entry{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
-                                      entry_kind::block } );
+                    draw_entry e{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
+                                  entry_kind::block };
+                    attach_sprite( e, here.ter( p ).id().str() );
+                    push( e );
                 } else if( here.impassable( p ) ||
                            here.has_flag( ter_furn_flag::TFLAG_GOES_UP, p ) ||
                            here.has_flag( ter_furn_flag::TFLAG_GOES_DOWN, p ) ||
@@ -3999,6 +4073,7 @@ class block_3d_world_renderer : public world_renderer
                     if( true_colors ) {
                         e.ao = top_corner_ao( here, p );
                     }
+                    attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
                 } else {
                     // Walkable ground: a thin slab with contact shadows
@@ -4009,6 +4084,7 @@ class block_3d_world_renderer : public world_renderer
                     if( true_colors ) {
                         e.ao = top_corner_ao( here, p );
                     }
+                    attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
                     const optional_vpart_position ovp = here.veh_at( p );
                     if( ovp ) {
@@ -4020,8 +4096,10 @@ class block_3d_world_renderer : public world_renderer
                                           entry_kind::block } );
                     } else if( here.has_furn( p ) ) {
                         top_h = 0.5f;
-                        push( draw_entry{ dx, dy, dz, 0.125f, top_h,
-                                          tile_color( here.furn( p )->color() ), entry_kind::block } );
+                        draw_entry furn_e{ dx, dy, dz, 0.125f, top_h,
+                                           tile_color( here.furn( p )->color() ), entry_kind::block };
+                        attach_sprite( furn_e, here.furn( p ).id().str() );
+                        push( furn_e );
                     }
                 }
 
@@ -4113,7 +4191,7 @@ class block_3d_world_renderer : public world_renderer
         // from the remembered terrain/decoration ids in the memory tint.
         template<typename PushFn>
         float emit_memory( const memorized_tile &mt, const int dx, const int dy, const int dz,
-                           const PushFn &push ) const {
+                           const PushFn &push ) {
             const ter_str_id tid( mt.get_ter_id() );
             if( !tid.is_valid() ) {
                 return 0.0f;
@@ -4126,6 +4204,11 @@ class block_3d_world_renderer : public world_renderer
             const auto mem_color = []( const nc_color & c ) {
                 return render_3d::memory_tint( to_rgba( curses_color_to_SDL( c ) ) );
             };
+            const auto attach_mem_sprite = [&]( draw_entry & e, const std::string & id ) {
+                if( sprite_for( id, e.tex, e.uv, e.aspect ) ) {
+                    e.tint = render_3d::memory_tint( render_3d::rgba{ 255, 255, 255, 255 } );
+                }
+            };
             float top_h = 0.125f;
             if( ter.movecost == 0 && !ter.has_flag( ter_furn_flag::TFLAG_TRANSPARENT ) ) {
                 top_h = 1.0f;
@@ -4137,16 +4220,20 @@ class block_3d_world_renderer : public world_renderer
                        ter.has_flag( ter_furn_flag::TFLAG_RAMP_DOWN ) ) {
                 top_h = 0.5f;
             }
-            push( draw_entry{ dx, dy, dz, 0.0f, top_h, mem_color( ter.color() ),
-                              entry_kind::block } );
+            draw_entry ter_e{ dx, dy, dz, 0.0f, top_h, mem_color( ter.color() ),
+                              entry_kind::block };
+            attach_mem_sprite( ter_e, mt.get_ter_id() );
+            push( ter_e );
 
             const std::string &dec = mt.get_dec_id();
             if( dec.compare( 0, 2, "f_" ) == 0 ) {
                 const furn_str_id fid( dec );
                 if( fid.is_valid() ) {
                     const float furn_top = std::max( top_h, 0.5f );
-                    push( draw_entry{ dx, dy, dz, top_h, furn_top, mem_color( fid.obj().color() ),
-                                      entry_kind::block } );
+                    draw_entry furn_e{ dx, dy, dz, top_h, furn_top, mem_color( fid.obj().color() ),
+                                       entry_kind::block };
+                    attach_mem_sprite( furn_e, dec );
+                    push( furn_e );
                     top_h = furn_top;
                 }
             } else if( dec.compare( 0, 3, "tr_" ) == 0 ) {
@@ -4195,7 +4282,7 @@ class block_3d_world_renderer : public world_renderer
         template<typename PushFn>
         void emit_creature( map &here, creature_tracker &creatures, const avatar &you,
                             const tripoint_bub_ms &p, const int dx, const int dy, const int dz,
-                            const float foot_h, const PushFn &push ) const {
+                            const float foot_h, const PushFn &push ) {
             const Creature *critter = creatures.creature_at( p, true );
             if( critter == nullptr || critter->is_avatar() || !you.sees( here, *critter ) ) {
                 return;
@@ -4204,11 +4291,62 @@ class block_3d_world_renderer : public world_renderer
             const render_3d::rgba color = render_3d::grade(
                                               render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light ),
                                               env_ );
-            push( draw_entry{ dx, dy, dz, foot_h, 0.0f, color, entry_kind::billboard } );
+            draw_entry e{ dx, dy, dz, foot_h, 0.0f, color, entry_kind::billboard };
+            if( const monster *const mon = critter->as_monster() ) {
+                if( sprite_for( mon->type->id.str(), e.tex, e.uv, e.aspect ) ) {
+                    e.tint = render_3d::grade(
+                                 render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
+                }
+            }
+            push( e );
+        }
+
+        // Resolve a tile id to its atlas texture and normalized UVs; false
+        // means no tileset sprite and the caller keeps the color fallback.
+        bool sprite_for( const std::string &id, SDL_Texture *&tex, render_3d::sprite_uv &uv,
+                         float &aspect ) {
+            if( !tilecontext ) {
+                return false;
+            }
+            SDL_Rect src{};
+            if( !tilecontext->get_sprite_ref( id, tex, src ) || src.w <= 0 || src.h <= 0 ) {
+                return false;
+            }
+            auto it = sheet_dims_.find( tex );
+            if( it == sheet_dims_.end() ) {
+                int w = 0;
+                int h = 0;
+#if SDL_MAJOR_VERSION >= 3
+                float fw = 0.0f;
+                float fh = 0.0f;
+                if( !SDL_GetTextureSize( tex, &fw, &fh ) ) {
+                    return false;
+                }
+                w = static_cast<int>( fw );
+                h = static_cast<int>( fh );
+#else
+                if( SDL_QueryTexture( tex, nullptr, nullptr, &w, &h ) != 0 ) {
+                    return false;
+                }
+#endif
+                if( w <= 0 || h <= 0 ) {
+                    return false;
+                }
+                it = sheet_dims_.emplace( tex, std::make_pair( static_cast<float>( w ),
+                                          static_cast<float>( h ) ) ).first;
+            }
+            uv.u0 = static_cast<float>( src.x ) / it->second.first;
+            uv.v0 = static_cast<float>( src.y ) / it->second.second;
+            uv.u1 = static_cast<float>( src.x + src.w ) / it->second.first;
+            uv.v1 = static_cast<float>( src.y + src.h ) / it->second.second;
+            aspect = static_cast<float>( src.h ) / static_cast<float>( src.w );
+            return true;
         }
 
         std::vector<std::vector<draw_entry>> buckets_;
         std::vector<render_3d::vtx> verts_;
+        std::vector<tex_run> runs_;
+        std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
         render_3d::light_env env_;
 };
 

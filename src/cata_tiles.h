@@ -171,6 +171,10 @@ class texture
         const SDL_Rect &get_opaque_rect() const {
             return opaque_rect;
         }
+        /// Returns the sprite's source rectangle within its atlas sheet.
+        const SDL_Rect &rect() const {
+            return srcrect;
+        }
         /// Returns the underlying SDL_Texture pointer (for blend mode changes).
         const std::shared_ptr<SDL_Texture> &get_texture_ptr() const {
             return sdl_texture_ptr;
@@ -586,6 +590,15 @@ class cata_tiles
         bool is_valid() {
             return tileset_ptr != nullptr;
         }
+
+        /**
+         * Resolve a tile id to its base sprite for external renderers (the
+         * block_3d backend): the atlas sheet texture and the sprite's
+         * source rect within it.  Uses the current season and the first fg
+         * sprite, ignoring rotation/subtile variants.  Returns false when
+         * the loaded tileset has no sprite for the id.
+         */
+        bool get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const;
 
         /** Draw to screen */
         void draw( const point &dest, const tripoint_bub_ms &center, int width, int height,

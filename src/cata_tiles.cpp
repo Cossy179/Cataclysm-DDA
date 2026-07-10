@@ -1949,6 +1949,29 @@ cata_tiles::find_tile_with_season( const std::string &id ) const
     return tileset_ptr->find_tile_type_by_season( id, season );
 }
 
+bool cata_tiles::get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const
+{
+    if( !tileset_ptr ) {
+        return false;
+    }
+    std::optional<tile_lookup_res> res = find_tile_with_season( id );
+    if( !res ) {
+        return false;
+    }
+    const std::vector<int> *const spritelist = res->tile().fg.pick( 0 );
+    if( spritelist == nullptr || spritelist->empty() || spritelist->front() < 0 ) {
+        return false;
+    }
+    const texture *const sprite = tileset_ptr->get_tile( static_cast<size_t>
+                                  ( spritelist->front() ) );
+    if( sprite == nullptr || !sprite->get_texture_ptr() ) {
+        return false;
+    }
+    tex = sprite->get_texture_ptr().get();
+    src = sprite->rect();
+    return true;
+}
+
 template<typename T>
 std::optional<tile_lookup_res>
 cata_tiles::find_tile_looks_like_by_string_id( std::string_view id, TILE_CATEGORY category,

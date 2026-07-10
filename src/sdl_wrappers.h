@@ -275,6 +275,13 @@ void RenderCopyEx( const SDL_Renderer_Ptr &renderer, SDL_Texture *texture,
  * older SDL2.
  */
 void RenderTriangles( const SDL_Renderer_Ptr &renderer, const render_3d::vtx *verts, int count );
+/**
+ * Textured variant: samples the given texture with each vertex's
+ * normalized u/v, modulated by the vertex color.  A null texture draws
+ * flat-colored.
+ */
+void RenderTriangles( const SDL_Renderer_Ptr &renderer, SDL_Texture *texture,
+                      const render_3d::vtx *verts, int count );
 void RenderSetClipRect( const SDL_Renderer_Ptr &renderer, const SDL_Rect *rect );
 void RenderGetClipRect( const SDL_Renderer_Ptr &renderer, SDL_Rect *rect );
 bool RenderIsClipEnabled( const SDL_Renderer_Ptr &renderer );

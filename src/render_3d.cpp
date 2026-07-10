@@ -167,15 +167,76 @@ void emit_block_shaded( std::vector<vtx> &out, const camera &cam, const int dx, 
                   shade( color, FACE_TOP * shading.top_ao[2] ),
                   shade( color, FACE_TOP * shading.top_ao[3] ) );
 
-    if( top_h > base_h ) {
-        const fpoint bw = project( cam, fdx, fdy + 1.0f, fdz + base_h );
-        const fpoint bs = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + base_h );
-        const fpoint be = project( cam, fdx + 1.0f, fdy, fdz + base_h );
-        // South (+y) face: west-top, south-top, south-bottom, west-bottom.
-        emit_quad( out, tw, ts, bs, bw, shade( color, shading.south ) );
-        // East (+x) face: south-top, east-top, east-bottom, south-bottom.
-        emit_quad( out, ts, te, be, bs, shade( color, shading.east ) );
+    emit_block_sides( out, cam, dx, dy, dz, base_h, top_h, color, shading.south, shading.east );
+}
+
+void emit_block_sides( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
+                       const int dz, const float base_h, const float top_h, const rgba &color,
+                       const float south, const float east )
+{
+    if( top_h <= base_h ) {
+        return;
     }
+    const float fdx = static_cast<float>( dx );
+    const float fdy = static_cast<float>( dy );
+    const float fdz = static_cast<float>( dz );
+    const fpoint te = project( cam, fdx + 1.0f, fdy, fdz + top_h );
+    const fpoint ts = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + top_h );
+    const fpoint tw = project( cam, fdx, fdy + 1.0f, fdz + top_h );
+    const fpoint bw = project( cam, fdx, fdy + 1.0f, fdz + base_h );
+    const fpoint bs = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + base_h );
+    const fpoint be = project( cam, fdx + 1.0f, fdy, fdz + base_h );
+    // South (+y) face: west-top, south-top, south-bottom, west-bottom.
+    emit_quad( out, tw, ts, bs, bw, shade( color, south ) );
+    // East (+x) face: south-top, east-top, east-bottom, south-bottom.
+    emit_quad( out, ts, te, be, bs, shade( color, east ) );
+}
+
+void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, const int dx,
+                              const int dy, const int dz, const float top_h, const rgba &tint,
+                              const std::array<float, 4> &ao, const sprite_uv &uv )
+{
+    const float fdx = static_cast<float>( dx );
+    const float fdy = static_cast<float>( dy );
+    const float fdz = static_cast<float>( dz );
+    const fpoint tn = project( cam, fdx, fdy, fdz + top_h );
+    const fpoint te = project( cam, fdx + 1.0f, fdy, fdz + top_h );
+    const fpoint ts = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + top_h );
+    const fpoint tw = project( cam, fdx, fdy + 1.0f, fdz + top_h );
+    const rgba cn = shade( tint, FACE_TOP * ao[0] );
+    const rgba ce = shade( tint, FACE_TOP * ao[1] );
+    const rgba cs = shade( tint, FACE_TOP * ao[2] );
+    const rgba cw = shade( tint, FACE_TOP * ao[3] );
+    // Sprite top-left maps to the cell's north corner, top-right to east,
+    // bottom-right to south, bottom-left to west.
+    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0 } );
+    out.push_back( vtx{ te.x, te.y, ce, uv.u1, uv.v0 } );
+    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1 } );
+    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0 } );
+    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1 } );
+    out.push_back( vtx{ tw.x, tw.y, cw, uv.u0, uv.v1 } );
+}
+
+void emit_sprite_billboard( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
+                            const int dz, const float foot_h, const float aspect,
+                            const rgba &tint, const sprite_uv &uv )
+{
+    const fpoint foot = project( cam, static_cast<float>( dx ) + 0.5f,
+                                 static_cast<float>( dy ) + 0.5f,
+                                 static_cast<float>( dz ) + foot_h );
+    const float width = 0.75f * static_cast<float>( cam.tile_width );
+    const float height = width * std::max( aspect, 0.1f );
+    const float half_width = width / 2.0f;
+    const fpoint bl{ foot.x - half_width, foot.y };
+    const fpoint br{ foot.x + half_width, foot.y };
+    const fpoint tr{ foot.x + half_width, foot.y - height };
+    const fpoint tl{ foot.x - half_width, foot.y - height };
+    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0 } );
+    out.push_back( vtx{ tr.x, tr.y, tint, uv.u1, uv.v0 } );
+    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1 } );
+    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0 } );
+    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1 } );
+    out.push_back( vtx{ bl.x, bl.y, tint, uv.u0, uv.v1 } );
 }
 
 namespace
