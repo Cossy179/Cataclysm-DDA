@@ -2779,6 +2779,14 @@ void options_manager::add_options_graphics()
         },
         "sprites", COPT_CURSES_HIDE
            );
+
+#if defined(USE_SDL3)
+        add( "WORLD_POSTFX", page_id, to_translation( "3D post-processing (FXAA)" ),
+             to_translation( "If true, the 3D blocks world renderer smooths jagged geometric edges with an FXAA post-process shader.  Only takes effect on the GPU render driver; other renderers ignore it." ),
+             true, COPT_CURSES_HIDE
+           );
+        get_option( "WORLD_POSTFX" ).setPrerequisite( "WORLD_RENDERER", "block_3d" );
+#endif
         // FRAMEBUFFER_ACCEL only meaningful for the SDL2 software renderer
         // path; under SDL3 the renderer is hidden and software fallback is
         // automatic, so the option is hidden too.

@@ -231,6 +231,8 @@ const char *shader_basename_for( variant_kind v )
             return "nightvision.frag";
         case variant_kind::OVEREXPOSED:
             return "overexposed.frag";
+        case variant_kind::SCENE_POST:
+            return "scene_fxaa.frag";
         case variant_kind::NORMAL:
         case variant_kind::MEMORY:
         case variant_kind::count:
@@ -291,6 +293,17 @@ bool cool_predicate( int r, int /*g*/, int b )
     return b > r + 5;
 }
 
+bool passthrough_gray_predicate( int r, int g, int b )
+{
+    // FXAA is the identity on flat input, so the mid-gray probe must come
+    // back essentially unchanged. This cannot distinguish "shader ran" from
+    // "bind silently ignored" for this one variant; that detection is
+    // delegated to the distinctive variants sharing the same all-or-nothing
+    // probe (a systemic miswire fails those first).
+    return std::abs( r - g ) < 8 && std::abs( g - b ) < 8 &&
+           r > 112 && r < 144;
+}
+
 probe_predicate predicate_for( variant_kind v )
 {
     switch( v ) {
@@ -299,6 +312,8 @@ probe_predicate predicate_for( variant_kind v )
         case variant_kind::NIGHT:
         case variant_kind::OVEREXPOSED:
             return nightvision_predicate;
+        case variant_kind::SCENE_POST:
+            return passthrough_gray_predicate;
         case variant_kind::NORMAL:
         case variant_kind::MEMORY:
         case variant_kind::count:

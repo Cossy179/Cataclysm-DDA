@@ -41,6 +41,7 @@ enum class variant_kind : int {
     NIGHT,        // nightvision active at lit_level::LOW
     OVEREXPOSED,  // nightvision active at lit_level above LOW
     MEMORY,       // lit_level::MEMORIZED
+    SCENE_POST,   // FXAA post-process over the block_3d world viewport
     count
 };
 

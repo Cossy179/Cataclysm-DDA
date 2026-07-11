@@ -256,3 +256,4 @@ VERSION.txt
 
 # Local CMake build directories
 /build-tiles/
+/build-sdl3/

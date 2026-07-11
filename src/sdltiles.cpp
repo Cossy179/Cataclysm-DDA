@@ -3997,6 +3997,10 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
             RenderSetClipRect( renderer, nullptr );
+
+#if SDL_MAJOR_VERSION >= 3
+            apply_scene_post( viewport );
+#endif
         }
 
     private:
@@ -4409,6 +4413,96 @@ class block_3d_world_renderer : public world_renderer
             }
             push( e );
         }
+
+#if SDL_MAJOR_VERSION >= 3
+        // Post-process the finished 3D viewport through the SCENE_POST
+        // fragment shader (FXAA) when the SDL3 GPU render driver is active:
+        // copy the viewport out of the current render target into a scratch
+        // texture, then draw it back through the shader render state.
+        // Cleanly skips when shaders are unavailable (software/GL renderer,
+        // missing artifacts, disabled option) or when the scene rendered
+        // straight to the backbuffer, which cannot be sampled.
+        void apply_scene_post( const SDL_Rect &viewport ) {
+            if( viewport.w <= 0 || viewport.h <= 0 ||
+                !get_option<bool>( "WORLD_POSTFX" ) ) {
+                return;
+            }
+            cata_shader::variant_pass *vp = get_shared_variant_pass();
+            if( !vp ) {
+                return;
+            }
+            SDL_Texture *const scene_tex = SDL_GetRenderTarget( renderer.get() );
+            if( !scene_tex ) {
+                return;
+            }
+            // First bind doubles as the lazy availability probe; on the
+            // software renderer this settles into a cheap use_atlas refusal.
+            if( vp->try_begin( cata_shader::variant_kind::SCENE_POST ) !=
+                cata_shader::variant_pass::begin_result::bound ) {
+                return;
+            }
+            // Unbind while copying the scene out; the copy must not run
+            // through the FXAA state.
+            if( !vp->flush() ) {
+                renderer_boundary_signal_recovery_required();
+                return;
+            }
+            SDL_Texture_Ptr scratch = CreateTexture( renderer, SDL_PIXELFORMAT_ARGB8888,
+                                      SDL_TEXTUREACCESS_TARGET, viewport.w, viewport.h );
+            if( !scratch ) {
+                return;
+            }
+            {
+                scoped_render_target guard( renderer, scratch.get(), vp );
+                if( !guard.is_valid() ) {
+                    if( !guard.boundary_intact() ) {
+                        // Renderer undefined: scratch may still be referenced
+                        // as the pending target, so quarantine it.
+                        setup_target_quarantine().add( scratch.release() );
+                    }
+                    return;
+                }
+                SDL_BlendMode prior_blend = SDL_BLENDMODE_NONE;
+                SDL_GetTextureBlendMode( scene_tex, &prior_blend );
+                SDL_SetTextureBlendMode( scene_tex, SDL_BLENDMODE_NONE );
+                const SDL_FRect src_view{ static_cast<float>( viewport.x ),
+                                          static_cast<float>( viewport.y ),
+                                          static_cast<float>( viewport.w ),
+                                          static_cast<float>( viewport.h ) };
+                const SDL_FRect dst_full{ 0.0f, 0.0f,
+                                          static_cast<float>( viewport.w ),
+                                          static_cast<float>( viewport.h ) };
+                printErrorIf( !SDL_RenderTexture( renderer.get(), scene_tex,
+                                                  &src_view, &dst_full ),
+                              "scene_post: copy to scratch failed" );
+                SDL_SetTextureBlendMode( scene_tex, prior_blend );
+                if( !guard.restore() ) {
+                    setup_target_quarantine().add( scratch.release() );
+                    return;
+                }
+            }
+            if( vp->try_begin( cata_shader::variant_kind::SCENE_POST ) !=
+                cata_shader::variant_pass::begin_result::bound ) {
+                return;
+            }
+            SDL_SetTextureBlendMode( scratch.get(), SDL_BLENDMODE_NONE );
+            const SDL_FRect src_full{ 0.0f, 0.0f,
+                                      static_cast<float>( viewport.w ),
+                                      static_cast<float>( viewport.h ) };
+            const SDL_FRect dst_view{ static_cast<float>( viewport.x ),
+                                      static_cast<float>( viewport.y ),
+                                      static_cast<float>( viewport.w ),
+                                      static_cast<float>( viewport.h ) };
+            printErrorIf( !SDL_RenderTexture( renderer.get(), scratch.get(),
+                                              &src_full, &dst_view ),
+                          "scene_post: shaded copy back failed" );
+            if( !vp->flush() ) {
+                // Undefined shader bind: latch recovery so the UI is not
+                // drawn through the FXAA state on a wedged renderer.
+                renderer_boundary_signal_recovery_required();
+            }
+        }
+#endif
 
         // Resolve a tile id to its atlas texture and normalized UVs; false
         // means no tileset sprite and the caller keeps the color fallback.

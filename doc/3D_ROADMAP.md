@@ -193,11 +193,16 @@ Strictly layered on top of the Phase 3 raster renderer; every step optional and 
 - ✅ **Night-vision tint**: phosphor-green grading when NV goggles are active (`get_vision_modes()[NV_GOGGLES]`, the same bit the sprite renderer keys on).
 - ✅ **Colored light**: per-tile accumulated colored light (`level_cache.light_color_cache`) tints lit tiles and sprites using the sprite renderer's exact overlay formula (`render_3d::apply_light_color`), gated on `has_colored_lights`.
 
+**GPU shader lane opened (implemented):**
+- ✅ **The block_3d renderer now runs on the SDL3 GPU pipeline** (`USE_SDL3=ON`, the `gpu` render driver over Vulkan/D3D12/Metal): the whole 3D stack — triangle batches, textured tops, sprite billboards, animations — compiles and passes its full test suite under SDL3, and the first programmable-shader stage is live.
+- ✅ **FXAA post-process pass**: the finished 3D viewport is copied to a scratch target and drawn back through a custom fragment shader (`data/shaders/scene_fxaa.frag`, classic luma FXAA), smoothing the jagged edges of the flat-shaded block world. Plumbing: a `SCENE_POST` variant added to `cata_shader::variant_pass`, inheriting the existing all-or-nothing probe, renderer-recovery embargo, and `SDL_GPURenderState` bind discipline; the pass in `block_3d_world_renderer::apply_scene_post` cooperates with `scoped_render_target`/quarantine semantics and unbinds before any UI draws. Toggle: `WORLD_POSTFX` display option (SDL3 only, default on). Falls back to the plain raster output on the software/GL renderers, missing shader artifacts, or SDL2 builds — behavior there is unchanged.
+- ✅ Verified end-to-end on a headless software Vulkan device (lavapipe): the compiled SPIR-V artifact executes through `SDL_CreateGPURenderState` on the real `gpu` render driver and measurably anti-aliases a staircase edge (0 blended pixels without the shader, >150 with it), and the SDL3 test suite passes with the pass compiled in.
+
 Staged next steps, in order of payoff-per-effort:
 
-1. **Cast shadows (full)** — true shadow volumes/maps with proper penumbras and point-light shadows need the GPU backend (depth buffer); the current per-tile directional shade + AO + engine lightmap covers the common cases.
+1. **Cast shadows (full)** — true shadow volumes/maps with proper penumbras and point-light shadows need raw `SDL_GPU` pipelines with a depth buffer (the render-state lane shipped above only customizes fragment shading of 2D-renderer draws); the current per-tile directional shade + AO + engine lightmap covers the common cases.
 2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits. Pairs with tileset-textured faces.
-3. **Screen-space effects** — SSAO (full-screen), bloom (explosions, portal storms), weather-driven grading.
+3. **Screen-space effects** — more passes on the now-open `SCENE_POST` lane: SSAO-style edge darkening, full-screen bloom (explosions, portal storms), sharpening/CRT looks. Effects needing scene depth wait for the raw-GPU-pipeline step.
 4. **Global illumination** — start with baked/irradiance approximations per chunk; the fully static terrain between bashes makes caching viable.
 5. **Ray tracing (optional high-end path)** — two candidate routes, to be decided when we get there:
    - **Software voxel ray marching** (à la Teardown): a natural fit since the world is literally a voxel grid; runs on any GPU with compute shaders; likely the pragmatic choice.
