@@ -80,6 +80,14 @@ class shader
                                      unsigned int num_samplers,
                                      unsigned int num_uniform_buffers );
 
+        // Stage-generic variant of load_fragment, for the GPU scene pass's
+        // vertex shaders.
+        static shader load_stage( SDL_GPUDevice *device,
+                                  const std::string &basename,
+                                  SDL_GPUShaderStage stage,
+                                  unsigned int num_samplers,
+                                  unsigned int num_uniform_buffers );
+
         shader() = default;
         ~shader();
 

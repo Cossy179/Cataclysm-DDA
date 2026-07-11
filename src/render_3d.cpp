@@ -222,27 +222,31 @@ void visible_cell_bounds( const camera &cam, const int width, const int height,
 namespace
 {
 
+// Quad emitters carry each corner's fractional view depth (world x + y + z)
+// into vtx::d for the GPU scene pass.
 void emit_quad( std::vector<vtx> &out, const fpoint &a, const fpoint &b,
-                const fpoint &c, const fpoint &d, const rgba &color )
+                const fpoint &c, const fpoint &d, const rgba &color,
+                const float da, const float db, const float dc, const float dd )
 {
-    out.push_back( vtx{ a.x, a.y, color } );
-    out.push_back( vtx{ b.x, b.y, color } );
-    out.push_back( vtx{ c.x, c.y, color } );
-    out.push_back( vtx{ a.x, a.y, color } );
-    out.push_back( vtx{ c.x, c.y, color } );
-    out.push_back( vtx{ d.x, d.y, color } );
+    out.push_back( vtx{ a.x, a.y, color, 0.0f, 0.0f, da } );
+    out.push_back( vtx{ b.x, b.y, color, 0.0f, 0.0f, db } );
+    out.push_back( vtx{ c.x, c.y, color, 0.0f, 0.0f, dc } );
+    out.push_back( vtx{ a.x, a.y, color, 0.0f, 0.0f, da } );
+    out.push_back( vtx{ c.x, c.y, color, 0.0f, 0.0f, dc } );
+    out.push_back( vtx{ d.x, d.y, color, 0.0f, 0.0f, dd } );
 }
 
 void emit_quad_pv( std::vector<vtx> &out, const fpoint &a, const fpoint &b,
                    const fpoint &c, const fpoint &d, const rgba &ca, const rgba &cb,
-                   const rgba &cc, const rgba &cd )
+                   const rgba &cc, const rgba &cd,
+                   const float da, const float db, const float dc, const float dd )
 {
-    out.push_back( vtx{ a.x, a.y, ca } );
-    out.push_back( vtx{ b.x, b.y, cb } );
-    out.push_back( vtx{ c.x, c.y, cc } );
-    out.push_back( vtx{ a.x, a.y, ca } );
-    out.push_back( vtx{ c.x, c.y, cc } );
-    out.push_back( vtx{ d.x, d.y, cd } );
+    out.push_back( vtx{ a.x, a.y, ca, 0.0f, 0.0f, da } );
+    out.push_back( vtx{ b.x, b.y, cb, 0.0f, 0.0f, db } );
+    out.push_back( vtx{ c.x, c.y, cc, 0.0f, 0.0f, dc } );
+    out.push_back( vtx{ a.x, a.y, ca, 0.0f, 0.0f, da } );
+    out.push_back( vtx{ c.x, c.y, cc, 0.0f, 0.0f, dc } );
+    out.push_back( vtx{ d.x, d.y, cd, 0.0f, 0.0f, dd } );
 }
 
 } // namespace
@@ -262,6 +266,7 @@ void emit_block_shaded( std::vector<vtx> &out, const camera &cam, const int dx, 
     const float fdz = static_cast<float>( dz );
     // Top face diamond: north, east, south, west corners, with per-corner
     // ambient occlusion interpolated across the face.
+    const float dt = fdx + fdy + fdz + top_h;
     const fpoint tn = project( cam, fdx, fdy, fdz + top_h );
     const fpoint te = project( cam, fdx + 1.0f, fdy, fdz + top_h );
     const fpoint ts = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + top_h );
@@ -270,7 +275,8 @@ void emit_block_shaded( std::vector<vtx> &out, const camera &cam, const int dx, 
                   shade( color, FACE_TOP * shading.top_ao[0] ),
                   shade( color, FACE_TOP * shading.top_ao[1] ),
                   shade( color, FACE_TOP * shading.top_ao[2] ),
-                  shade( color, FACE_TOP * shading.top_ao[3] ) );
+                  shade( color, FACE_TOP * shading.top_ao[3] ),
+                  dt, dt + 1.0f, dt + 2.0f, dt + 1.0f );
 
     emit_block_sides( out, cam, dx, dy, dz, base_h, top_h, color, shading.south, shading.east );
 }
@@ -285,6 +291,8 @@ void emit_block_sides( std::vector<vtx> &out, const camera &cam, const int dx, c
     const float fdx = static_cast<float>( dx );
     const float fdy = static_cast<float>( dy );
     const float fdz = static_cast<float>( dz );
+    const float dt = fdx + fdy + fdz + top_h;
+    const float db = fdx + fdy + fdz + base_h;
     const fpoint te = project( cam, fdx + 1.0f, fdy, fdz + top_h );
     const fpoint ts = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + top_h );
     const fpoint tw = project( cam, fdx, fdy + 1.0f, fdz + top_h );
@@ -292,9 +300,11 @@ void emit_block_sides( std::vector<vtx> &out, const camera &cam, const int dx, c
     const fpoint bs = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + base_h );
     const fpoint be = project( cam, fdx + 1.0f, fdy, fdz + base_h );
     // South (+y) face: west-top, south-top, south-bottom, west-bottom.
-    emit_quad( out, tw, ts, bs, bw, shade( color, south ) );
+    emit_quad( out, tw, ts, bs, bw, shade( color, south ),
+               dt + 1.0f, dt + 2.0f, db + 2.0f, db + 1.0f );
     // East (+x) face: south-top, east-top, east-bottom, south-bottom.
-    emit_quad( out, ts, te, be, bs, shade( color, east ) );
+    emit_quad( out, ts, te, be, bs, shade( color, east ),
+               dt + 2.0f, dt + 1.0f, db + 1.0f, db + 2.0f );
 }
 
 void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, const int dx,
@@ -312,14 +322,15 @@ void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, const in
     const rgba ce = shade( tint, FACE_TOP * ao[1] );
     const rgba cs = shade( tint, FACE_TOP * ao[2] );
     const rgba cw = shade( tint, FACE_TOP * ao[3] );
+    const float dt = fdx + fdy + fdz + top_h;
     // Sprite top-left maps to the cell's north corner, top-right to east,
     // bottom-right to south, bottom-left to west.
-    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0 } );
-    out.push_back( vtx{ te.x, te.y, ce, uv.u1, uv.v0 } );
-    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1 } );
-    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0 } );
-    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1 } );
-    out.push_back( vtx{ tw.x, tw.y, cw, uv.u0, uv.v1 } );
+    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0, dt } );
+    out.push_back( vtx{ te.x, te.y, ce, uv.u1, uv.v0, dt + 1.0f } );
+    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1, dt + 2.0f } );
+    out.push_back( vtx{ tn.x, tn.y, cn, uv.u0, uv.v0, dt } );
+    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v1, dt + 2.0f } );
+    out.push_back( vtx{ tw.x, tw.y, cw, uv.u0, uv.v1, dt + 1.0f } );
 }
 
 void emit_sprite_billboard( std::vector<vtx> &out, const camera &cam, const int dx, const int dy,
@@ -332,16 +343,20 @@ void emit_sprite_billboard( std::vector<vtx> &out, const camera &cam, const int 
     const float width = 0.75f * static_cast<float>( cam.tile_width );
     const float height = width * std::max( aspect, 0.1f );
     const float half_width = width / 2.0f;
+    // Screen-space offsets from the foot, so every corner shares the
+    // foot's view depth: the billboard occludes as a point at its cell.
+    const float fd = static_cast<float>( dx ) + 0.5f + static_cast<float>( dy ) + 0.5f +
+                     static_cast<float>( dz ) + foot_h;
     const fpoint bl{ foot.x - half_width, foot.y };
     const fpoint br{ foot.x + half_width, foot.y };
     const fpoint tr{ foot.x + half_width, foot.y - height };
     const fpoint tl{ foot.x - half_width, foot.y - height };
-    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0 } );
-    out.push_back( vtx{ tr.x, tr.y, tint, uv.u1, uv.v0 } );
-    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1 } );
-    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0 } );
-    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1 } );
-    out.push_back( vtx{ bl.x, bl.y, tint, uv.u0, uv.v1 } );
+    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0, fd } );
+    out.push_back( vtx{ tr.x, tr.y, tint, uv.u1, uv.v0, fd } );
+    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1, fd } );
+    out.push_back( vtx{ tl.x, tl.y, tint, uv.u0, uv.v0, fd } );
+    out.push_back( vtx{ br.x, br.y, tint, uv.u1, uv.v1, fd } );
+    out.push_back( vtx{ bl.x, bl.y, tint, uv.u0, uv.v1, fd } );
 }
 
 namespace
@@ -354,15 +369,17 @@ void emit_diamond( std::vector<vtx> &out, const camera &cam, const int dx, const
     const fpoint foot = project( cam, static_cast<float>( dx ) + 0.5f,
                                  static_cast<float>( dy ) + 0.5f,
                                  static_cast<float>( dz ) + foot_h );
+    const float fd = static_cast<float>( dx ) + 0.5f + static_cast<float>( dy ) + 0.5f +
+                     static_cast<float>( dz ) + foot_h;
     const fpoint top{ foot.x, foot.y - height };
     const fpoint left{ foot.x - half_width, foot.y - height / 2.0f };
     const fpoint right{ foot.x + half_width, foot.y - height / 2.0f };
-    out.push_back( vtx{ foot.x, foot.y, color } );
-    out.push_back( vtx{ left.x, left.y, color } );
-    out.push_back( vtx{ top.x, top.y, color } );
-    out.push_back( vtx{ foot.x, foot.y, color } );
-    out.push_back( vtx{ top.x, top.y, color } );
-    out.push_back( vtx{ right.x, right.y, color } );
+    out.push_back( vtx{ foot.x, foot.y, color, 0.0f, 0.0f, fd } );
+    out.push_back( vtx{ left.x, left.y, color, 0.0f, 0.0f, fd } );
+    out.push_back( vtx{ top.x, top.y, color, 0.0f, 0.0f, fd } );
+    out.push_back( vtx{ foot.x, foot.y, color, 0.0f, 0.0f, fd } );
+    out.push_back( vtx{ top.x, top.y, color, 0.0f, 0.0f, fd } );
+    out.push_back( vtx{ right.x, right.y, color, 0.0f, 0.0f, fd } );
 }
 
 } // namespace
@@ -390,11 +407,178 @@ void emit_glow( std::vector<vtx> &out, const camera &cam, const int dx, const in
     const float cy = static_cast<float>( dy ) + 0.5f;
     const float half_size = size_cells / 2.0f;
     const float fz = static_cast<float>( dz ) + h;
+    const float dc = cx + cy + fz;
     const fpoint n = project( cam, cx - half_size, cy - half_size, fz );
     const fpoint e = project( cam, cx + half_size, cy - half_size, fz );
     const fpoint s = project( cam, cx + half_size, cy + half_size, fz );
     const fpoint w = project( cam, cx - half_size, cy + half_size, fz );
-    emit_quad( out, n, e, s, w, color );
+    emit_quad( out, n, e, s, w, color,
+               dc - size_cells, dc, dc + size_cells, dc );
+}
+
+void world_from_projected( const camera &cam, const float sx, const float sy, const float d,
+                           float &wx, float &wy, float &wz )
+{
+    const float half_w = std::max( static_cast<float>( cam.half_w() ), 1.0f );
+    const float quarter_w = std::max( static_cast<float>( cam.quarter_w() ), 1.0f );
+    const float k = static_cast<float>( cam.block_h() ) / quarter_w;
+    const float rx = ( sx - static_cast<float>( cam.origin_x ) ) / half_w;      // x - y
+    const float ry = ( sy - static_cast<float>( cam.origin_y ) ) / quarter_w;   // (x + y) - k z
+    // d = x + y + z, so ry = d - (1 + k) z.
+    wz = ( d - ry ) / ( 1.0f + k );
+    const float xy = d - wz;
+    wx = ( xy + rx ) / 2.0f;
+    wy = ( xy - rx ) / 2.0f;
+}
+
+bool sun_light_space( const float shadow_x, const float shadow_y,
+                      const float x0, const float y0, const float z0,
+                      const float x1, const float y1, const float z1,
+                      light_space &out )
+{
+    out = light_space{};
+    if( !( x1 > x0 ) || !( y1 > y0 ) || !( z1 > z0 ) ) {
+        return false;
+    }
+    // A blocker of height 1 casts its shadow displaced by (shadow_x,
+    // shadow_y), so light rays travel along (shadow_x, shadow_y, -1).
+    float lx = shadow_x;
+    float ly = shadow_y;
+    float lz = -1.0f;
+    const float llen = std::sqrt( lx * lx + ly * ly + lz * lz );
+    lx /= llen;
+    ly /= llen;
+    lz /= llen;
+    // Shadow-map plane axes orthogonal to the ray. cross(L, +z) unless the
+    // sun is exactly overhead, then any horizontal axis works.
+    float ax = ly;
+    float ay = -lx;
+    float az = 0.0f;
+    const float alen = std::sqrt( ax * ax + ay * ay );
+    if( alen > 0.0001f ) {
+        ax /= alen;
+        ay /= alen;
+    } else {
+        ax = 1.0f;
+        ay = 0.0f;
+    }
+    // b = cross(L, a) completes the basis.
+    const float bx = ly * az - lz * ay;
+    const float by = lz * ax - lx * az;
+    const float bz = lx * ay - ly * ax;
+
+    struct row {
+        float x, y, z;
+        float *ox, *oy, *oz, *oo;
+    };
+    row rows[3] = {
+        { ax, ay, az, &out.ux, &out.uy, &out.uz, &out.uo },
+        { bx, by, bz, &out.vx, &out.vy, &out.vz, &out.vo },
+        { lx, ly, lz, &out.dx, &out.dy, &out.dz, &out.do_ },
+    };
+    for( const row &r : rows ) {
+        float mn = 0.0f;
+        float mx = 0.0f;
+        bool first = true;
+        for( int i = 0; i < 8 ; i++ ) {
+            const float cx = ( i & 1 ) != 0 ? x1 : x0;
+            const float cy = ( i & 2 ) != 0 ? y1 : y0;
+            const float cz = ( i & 4 ) != 0 ? z1 : z0;
+            const float v = r.x * cx + r.y * cy + r.z * cz;
+            mn = first ? v : std::min( mn, v );
+            mx = first ? v : std::max( mx, v );
+            first = false;
+        }
+        // Pad so PCF taps at the map edge stay inside the fitted range.
+        const float pad = 0.02f * ( mx - mn ) + 0.001f;
+        mn -= pad;
+        mx += pad;
+        const float span = mx - mn;
+        if( span <= 0.0001f ) {
+            out = light_space{};
+            return false;
+        }
+        const float scale = 1.0f / span;
+        *r.ox = r.x * scale;
+        *r.oy = r.y * scale;
+        *r.oz = r.z * scale;
+        *r.oo = -mn * scale;
+    }
+    return true;
+}
+
+void emit_block_light_space( std::vector<float> &out, const light_space &ls,
+                             const int dx, const int dy, const int dz,
+                             const float base_h, const float top_h )
+{
+    // The block's eight corners in light space: index bit 0 -> +x,
+    // bit 1 -> +y, bit 2 -> top instead of base.
+    float cu[8];
+    float cv[8];
+    float cd[8];
+    const float fdx = static_cast<float>( dx );
+    const float fdy = static_cast<float>( dy );
+    const float fdz = static_cast<float>( dz );
+    for( int i = 0; i < 8; i++ ) {
+        const float wx = fdx + ( ( i & 1 ) != 0 ? 1.0f : 0.0f );
+        const float wy = fdy + ( ( i & 2 ) != 0 ? 1.0f : 0.0f );
+        const float wz = fdz + ( ( i & 4 ) != 0 ? top_h : base_h );
+        ls.apply( wx, wy, wz, cu[i], cv[i], cd[i] );
+    }
+    const auto tri = [&]( const int a, const int b, const int c ) {
+        out.push_back( cu[a] );
+        out.push_back( cv[a] );
+        out.push_back( cd[a] );
+        out.push_back( cu[b] );
+        out.push_back( cv[b] );
+        out.push_back( cd[b] );
+        out.push_back( cu[c] );
+        out.push_back( cv[c] );
+        out.push_back( cd[c] );
+    };
+    const auto quad = [&]( const int a, const int b, const int c, const int d ) {
+        tri( a, b, c );
+        tri( a, c, d );
+    };
+    quad( 0, 1, 3, 2 ); // bottom
+    quad( 4, 5, 7, 6 ); // top
+    quad( 0, 1, 5, 4 ); // north (-y)
+    quad( 2, 3, 7, 6 ); // south (+y)
+    quad( 0, 2, 6, 4 ); // west (-x)
+    quad( 1, 3, 7, 5 ); // east (+x)
+}
+
+void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
+                        const int view_x, const int view_y, const int view_w, const int view_h,
+                        const float d_min, const float d_max, const float recv,
+                        const light_space &ls, std::vector<gpu_vtx> &out )
+{
+    const float w = std::max( static_cast<float>( view_w ), 1.0f );
+    const float h = std::max( static_cast<float>( view_h ), 1.0f );
+    const float span = std::max( d_max - d_min, 0.001f );
+    out.reserve( out.size() + in.size() );
+    for( const vtx &v : in ) {
+        gpu_vtx g;
+        g.x = ( v.x - static_cast<float>( view_x ) ) / w * 2.0f - 1.0f;
+        // Screen y grows downward, NDC y grows upward.
+        g.y = -( ( v.y - static_cast<float>( view_y ) ) / h * 2.0f - 1.0f );
+        // Larger view depth is nearer the camera, i.e. smaller z under
+        // LESS_OR_EQUAL. Clamp inside (0, 1): Vulkan clips outside it.
+        g.z = std::clamp( 1.0f - ( v.d - d_min ) / span, 0.0001f, 0.9999f );
+        g.recv = recv;
+        g.r = v.c.r;
+        g.g = v.c.g;
+        g.b = v.c.b;
+        g.a = v.c.a;
+        g.u = v.u;
+        g.v = v.v;
+        float wx = 0.0f;
+        float wy = 0.0f;
+        float wz = 0.0f;
+        world_from_projected( cam, v.x, v.y, v.d, wx, wy, wz );
+        ls.apply( wx, wy, wz, g.lu, g.lv, g.ld );
+        out.push_back( g );
+    }
 }
 
 } // namespace render_3d

@@ -26,7 +26,11 @@ struct rgba {
 /**
  * A screen-space triangle vertex; triples of these form triangles.  u/v are
  * normalized texture coordinates, meaningful only when the batch is drawn
- * with a texture; color modulates the texture.
+ * with a texture; color modulates the texture.  d is the fractional view
+ * depth (world x + y + z at the vertex, in cells/blocks relative to the
+ * view center): larger is nearer the camera.  The 2D triangle path ignores
+ * it; the GPU scene pass uses it for depth testing and for recovering the
+ * world position behind each vertex (see world_from_projected).
  */
 struct vtx {
     float x = 0.0f;
@@ -34,6 +38,7 @@ struct vtx {
     rgba c;
     float u = 0.0f;
     float v = 0.0f;
+    float d = 0.0f;
 };
 
 /** Normalized source rectangle of a sprite within its atlas sheet. */
@@ -277,6 +282,85 @@ void emit_marker( std::vector<vtx> &out, const camera &cam, int dx, int dy, int 
  */
 void emit_glow( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
                 float h, float size_cells, const rgba &color );
+
+// --- GPU scene pass support (doc/3D_ROADMAP.md Phase 4) ---------------
+// Pure math shared by the SDL_GPU depth-buffered scene pass and its
+// tests: recovering world positions from projected vertices, the sun's
+// orthographic light-space transform for shadow mapping, and packing
+// screen vertices into the GPU vertex layout.
+
+/**
+ * Invert project() given the vertex's fractional view depth d = x + y + z:
+ * the unique world position (in cells/blocks relative to the view center)
+ * that projects to screen point (sx, sy) at that depth.  Exact for every
+ * vertex emitted from a real world position.
+ */
+void world_from_projected( const camera &cam, float sx, float sy, float d,
+                           float &wx, float &wy, float &wz );
+
+/**
+ * Orthographic light-space transform for sun shadow mapping.  Rows map a
+ * world position (cells; z in blocks) to shadow-map u, v in [0, 1] and a
+ * light-view depth in [0, 1] (smaller is nearer the sun), fitted over a
+ * world-space bounding box by sun_light_space().
+ */
+struct light_space {
+    // u = dot(world, (ux, uy, uz)) + uo, likewise v and depth.
+    float ux = 0.0f, uy = 0.0f, uz = 0.0f, uo = 0.0f;
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f, vo = 0.0f;
+    float dx = 0.0f, dy = 0.0f, dz = 0.0f, do_ = 0.0f;
+
+    void apply( float wx, float wy, float wz, float &u, float &v, float &d ) const {
+        u = ux * wx + uy * wy + uz * wz + uo;
+        v = vx * wx + vy * wy + vz * wz + vo;
+        d = dx * wx + dy * wy + dz * wz + do_;
+    }
+};
+
+/**
+ * Build the sun's light space from the engine's ground-shadow vector
+ * (sunlight_angle(): the shadow cast per unit of blocker height) and the
+ * world-space box (in view-relative cells / blocks) the shadow map must
+ * cover.  Returns false when the shadow vector is degenerate or the box
+ * is empty; the identity-zero transform then maps everything to depth 0,
+ * which reads as fully lit against a far-cleared shadow map.
+ */
+bool sun_light_space( float shadow_x, float shadow_y,
+                      float x0, float y0, float z0, float x1, float y1, float z1,
+                      light_space &out );
+
+/**
+ * Emit all six faces of the block spanning cells (dx, dy, dz, base_h) to
+ * (dx+1, dy+1, dz, top_h) directly in light space, as shadow-caster
+ * triangles of (u, v, depth) triples appended to out (three floats per
+ * vertex).  Depth-only geometry: no color, no winding significance.
+ */
+void emit_block_light_space( std::vector<float> &out, const light_space &ls,
+                             int dx, int dy, int dz, float base_h, float top_h );
+
+/**
+ * One vertex of the GPU scene pass: clip-space position (x, y in NDC with
+ * +y up, z depth in [0, 1] where smaller is nearer), a shadow-receive
+ * flag in w, color, atlas uv, and the interpolated light-space coordinate
+ * for shadow sampling.
+ */
+struct gpu_vtx {
+    float x = 0.0f, y = 0.0f, z = 0.0f, recv = 0.0f;
+    uint8_t r = 0, g = 0, b = 0, a = 255;
+    float u = 0.0f, v = 0.0f;
+    float lu = 0.0f, lv = 0.0f, ld = 0.0f;
+};
+
+/**
+ * Convert screen-space vertices (from the emit_* family) to GPU scene
+ * vertices: viewport-local NDC, depth normalized over [d_min, d_max]
+ * (flipped so larger view depth is nearer, i.e. smaller z), light-space
+ * coordinates recovered via world_from_projected, and the receive flag.
+ */
+void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
+                        int view_x, int view_y, int view_w, int view_h,
+                        float d_min, float d_max, float recv,
+                        const light_space &ls, std::vector<gpu_vtx> &out );
 
 } // namespace render_3d
 

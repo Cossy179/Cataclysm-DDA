@@ -2786,6 +2786,12 @@ void options_manager::add_options_graphics()
              true, COPT_CURSES_HIDE
            );
         get_option( "WORLD_POSTFX" ).setPrerequisite( "WORLD_RENDERER", "block_3d" );
+
+        add( "WORLD_GPU_SCENE", page_id, to_translation( "3D GPU scene pass (shadow maps)" ),
+             to_translation( "If true, the 3D blocks world renderer draws through a depth-buffered GPU pipeline with real shadow-mapped sun shadows.  Only takes effect on the GPU render driver; other renderers fall back to the standard 3D rendering." ),
+             true, COPT_CURSES_HIDE
+           );
+        get_option( "WORLD_GPU_SCENE" ).setPrerequisite( "WORLD_RENDERER", "block_3d" );
 #endif
         // FRAMEBUFFER_ACCEL only meaningful for the SDL2 software renderer
         // path; under SDL3 the renderer is hidden and software fallback is

@@ -76,6 +76,14 @@ std::vector<unsigned char> read_file_bytes( const std::string &path )
 shader shader::load_fragment( SDL_GPUDevice *device, const std::string &basename,
                               unsigned int num_samplers, unsigned int num_uniform_buffers )
 {
+    return load_stage( device, basename, SDL_GPU_SHADERSTAGE_FRAGMENT,
+                       num_samplers, num_uniform_buffers );
+}
+
+shader shader::load_stage( SDL_GPUDevice *device, const std::string &basename,
+                           const SDL_GPUShaderStage stage,
+                           unsigned int num_samplers, unsigned int num_uniform_buffers )
+{
     if( !device ) {
         return shader{};
     }
@@ -117,7 +125,7 @@ shader shader::load_fragment( SDL_GPUDevice *device, const std::string &basename
     info.code = bytes.data();
     info.entrypoint = nullptr; // Let SDL supply backend default; do not hardcode "main".
     info.format = chosen->shader_format;
-    info.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+    info.stage = stage;
     info.num_samplers = num_samplers;
     info.num_storage_textures = 0;
     info.num_storage_buffers = 0;

@@ -90,6 +90,7 @@
 #include "path_info.h"
 #include "map_scale_constants.h"
 #include "render_3d.h"
+#include "render_3d_gpu.h"
 #include "sdl_geometry.h"
 #include "sdl_renderer_recovery.h"
 #include "sdl_utils.h"
@@ -3810,6 +3811,8 @@ class block_3d_world_renderer : public world_renderer
             sun_up_ = false;
             sun_step_x_ = 0;
             sun_step_y_ = 0;
+            sun_shadow_x_ = 0.0f;
+            sun_shadow_y_ = 0.0f;
             if( center.z() >= 0 ) {
                 const std::optional<rl_vec2d> shadow = sunlight_angle( calendar::turn );
                 sun_up_ = shadow.has_value();
@@ -3817,6 +3820,8 @@ class block_3d_world_renderer : public world_renderer
                                              sun_up_ ? shadow->y : 0.0f, env_ );
                 if( sun_up_ ) {
                     render_3d::sun_step( shadow->x, shadow->y, sun_step_x_, sun_step_y_ );
+                    sun_shadow_x_ = shadow->x;
+                    sun_shadow_y_ = shadow->y;
                 }
                 if( you.get_vision_modes()[NV_GOGGLES] ) {
                     render_3d::night_vision_grading( env_ );
@@ -3858,6 +3863,15 @@ class block_3d_world_renderer : public world_renderer
                     std::min( MAPSIZE_Y - 1, center.y() + ( v_max - u_min ) / 2 ), center.z() );
                 you.prepare_map_memory_region( here.get_abs( mm_min ), here.get_abs( mm_max ) );
             }
+
+            // GPU scene pass availability decides whether the CPU
+            // shadow-march runs: per-pixel shadow-mapped sun shadows and
+            // the marched per-tile shade must not stack.
+            gpu_scene_try_ = false;
+#if SDL_MAJOR_VERSION >= 3
+            gpu_scene_try_ = get_option<bool>( "WORLD_GPU_SCENE" ) &&
+                             gpu_pass_.likely_available( renderer );
+#endif
 
             // Painter's-order buckets over depth_key = dx + dy + dz.
             const int key_min = v_min - z_below;
@@ -3921,82 +3935,95 @@ class block_3d_world_renderer : public world_renderer
                 emit_overlay_frame( overlay_scratch_, center, push );
             }
 
-            verts_.clear();
-            runs_.clear();
-            const auto begin_run = [&]( SDL_Texture * tex ) {
-                if( !runs_.empty() && runs_.back().tex == tex ) {
-                    return;
+            const SDL_Rect viewport{ scene.dest.x, scene.dest.y, scene.width, scene.height };
+
+            // Depth-buffered GPU scene pass with shadow mapping; falls
+            // back to the CPU triangle batch on any unavailability.
+            bool drew_gpu = false;
+#if SDL_MAJOR_VERSION >= 3
+            if( gpu_scene_try_ ) {
+                drew_gpu = draw_gpu_scene( cam, viewport, key_min, v_max,
+                                           u_min, u_max, v_min, v_max, z_below );
+            }
+#endif
+
+            if( !drew_gpu ) {
+                verts_.clear();
+                runs_.clear();
+                const auto begin_run = [&]( SDL_Texture * tex ) {
+                    if( !runs_.empty() && runs_.back().tex == tex ) {
+                        return;
+                    }
+                    if( !runs_.empty() ) {
+                        runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
+                    }
+                    runs_.push_back( tex_run{ tex, static_cast<int>( verts_.size() ), 0 } );
+                };
+                for( const std::vector<draw_entry> &bucket : buckets_ ) {
+                    // Colored geometry first, then sprites grouped by atlas
+                    // sheet: entries within one depth bucket never overlap, so
+                    // regrouping is order-safe and keeps texture switches rare.
+                    begin_run( nullptr );
+                    for( const draw_entry &e : bucket ) {
+                        switch( e.kind ) {
+                            case entry_kind::billboard:
+                                if( e.tex == nullptr ) {
+                                    render_3d::emit_billboard( verts_, cam, e.dx, e.dy, e.dz,
+                                                               e.base_h, e.color );
+                                }
+                                break;
+                            case entry_kind::marker:
+                                render_3d::emit_marker( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
+                                                        e.color );
+                                break;
+                            case entry_kind::glow:
+                                render_3d::emit_glow( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
+                                                      e.top_h, e.color );
+                                break;
+                            case entry_kind::block:
+                            default:
+                                if( e.tex == nullptr ) {
+                                    const render_3d::block_shading shading{ e.ao, env_.face_south,
+                                                                            env_.face_east };
+                                    render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
+                                                                  e.base_h, e.top_h, e.color, shading );
+                                } else {
+                                    render_3d::emit_block_sides( verts_, cam, e.dx, e.dy, e.dz,
+                                                                 e.base_h, e.top_h, e.color,
+                                                                 env_.face_south, env_.face_east );
+                                }
+                                break;
+                        }
+                    }
+                    for( const draw_entry &e : bucket ) {
+                        if( e.tex == nullptr ) {
+                            continue;
+                        }
+                        begin_run( e.tex );
+                        if( e.kind == entry_kind::block ) {
+                            render_3d::emit_block_top_textured( verts_, cam, e.dx, e.dy, e.dz,
+                                                                e.top_h, e.tint, e.ao, e.uv );
+                        } else if( e.kind == entry_kind::billboard ) {
+                            render_3d::emit_sprite_billboard( verts_, cam, e.dx, e.dy, e.dz,
+                                                              e.base_h, e.aspect, e.tint, e.uv );
+                        }
+                    }
                 }
                 if( !runs_.empty() ) {
                     runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
                 }
-                runs_.push_back( tex_run{ tex, static_cast<int>( verts_.size() ), 0 } );
-            };
-            for( const std::vector<draw_entry> &bucket : buckets_ ) {
-                // Colored geometry first, then sprites grouped by atlas
-                // sheet: entries within one depth bucket never overlap, so
-                // regrouping is order-safe and keeps texture switches rare.
-                begin_run( nullptr );
-                for( const draw_entry &e : bucket ) {
-                    switch( e.kind ) {
-                        case entry_kind::billboard:
-                            if( e.tex == nullptr ) {
-                                render_3d::emit_billboard( verts_, cam, e.dx, e.dy, e.dz,
-                                                           e.base_h, e.color );
-                            }
-                            break;
-                        case entry_kind::marker:
-                            render_3d::emit_marker( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
-                                                    e.color );
-                            break;
-                        case entry_kind::glow:
-                            render_3d::emit_glow( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
-                                                  e.top_h, e.color );
-                            break;
-                        case entry_kind::block:
-                        default:
-                            if( e.tex == nullptr ) {
-                                const render_3d::block_shading shading{ e.ao, env_.face_south,
-                                                                        env_.face_east };
-                                render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
-                                                              e.base_h, e.top_h, e.color, shading );
-                            } else {
-                                render_3d::emit_block_sides( verts_, cam, e.dx, e.dy, e.dz,
-                                                             e.base_h, e.top_h, e.color,
-                                                             env_.face_south, env_.face_east );
-                            }
-                            break;
+
+                geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
+                RenderSetClipRect( renderer, &viewport );
+                for( const tex_run &run : runs_ ) {
+                    if( run.count > 0 ) {
+                        RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
                     }
                 }
-                for( const draw_entry &e : bucket ) {
-                    if( e.tex == nullptr ) {
-                        continue;
-                    }
-                    begin_run( e.tex );
-                    if( e.kind == entry_kind::block ) {
-                        render_3d::emit_block_top_textured( verts_, cam, e.dx, e.dy, e.dz,
-                                                            e.top_h, e.tint, e.ao, e.uv );
-                    } else if( e.kind == entry_kind::billboard ) {
-                        render_3d::emit_sprite_billboard( verts_, cam, e.dx, e.dy, e.dz,
-                                                          e.base_h, e.aspect, e.tint, e.uv );
-                    }
-                }
-            }
-            if( !runs_.empty() ) {
-                runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
+                RenderSetClipRect( renderer, nullptr );
             }
 
             emit_sct_overlay( cam, scene.dest, center, overlay_strings );
-
-            const SDL_Rect viewport{ scene.dest.x, scene.dest.y, scene.width, scene.height };
-            geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
-            RenderSetClipRect( renderer, &viewport );
-            for( const tex_run &run : runs_ ) {
-                if( run.count > 0 ) {
-                    RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
-                }
-            }
-            RenderSetClipRect( renderer, nullptr );
 
 #if SDL_MAJOR_VERSION >= 3
             apply_scene_post( viewport );
@@ -4249,6 +4276,11 @@ class block_3d_world_renderer : public world_renderer
         // darker. The engine's own lightmap has no directional sun
         // shadowing, so this is purely visual information.
         float sun_shadow_at( map &here, const tripoint_bub_ms &p ) const {
+            // The GPU scene pass casts real shadow-mapped sun shadows;
+            // the marched per-tile approximation must not stack on top.
+            if( gpu_scene_try_ ) {
+                return 1.0f;
+            }
             if( !sun_up_ || ( sun_step_x_ == 0 && sun_step_y_ == 0 ) ||
                 !here.access_cache( p.z() ).outside_cache[p.x()][p.y()] ) {
                 return 1.0f;
@@ -4415,6 +4447,142 @@ class block_3d_world_renderer : public world_renderer
         }
 
 #if SDL_MAJOR_VERSION >= 3
+        // Depth-buffered GPU scene pass (doc/3D_ROADMAP.md Phase 4): pack
+        // the depth buckets into GPU vertex streams — clip-space positions
+        // with real per-vertex depth, plus light-space coordinates and the
+        // shadow-caster geometry for the sun shadow map — and render them
+        // through scene_gpu_pass. True when the frame was drawn and
+        // composited; false falls back to the CPU triangle batch.
+        bool draw_gpu_scene( const render_3d::camera &cam, const SDL_Rect &viewport,
+                             const int key_min, const int key_max,
+                             const int u_min, const int u_max,
+                             const int v_min, const int v_max, const int z_below ) {
+            // Sun light space fitted over the visible world box (cells
+            // relative to the view center; z in blocks).
+            render_3d::light_space ls;
+            bool shadows = false;
+            if( sun_up_ ) {
+                const float x0 = static_cast<float>( ( u_min + v_min ) / 2 - 1 );
+                const float x1 = static_cast<float>( ( u_max + v_max ) / 2 + 2 );
+                const float y0 = static_cast<float>( ( v_min - u_max ) / 2 - 1 );
+                const float y1 = static_cast<float>( ( v_max - u_min ) / 2 + 2 );
+                const float z0 = static_cast<float>( -z_below ) - 0.5f;
+                const float z1 = 1.5f;
+                shadows = render_3d::sun_light_space( sun_shadow_x_, sun_shadow_y_,
+                                                      x0, y0, z0, x1, y1, z1, ls );
+            }
+            // Depth normalization range: bucket keys plus the fractional
+            // corner and height contributions (up to +-3 around a key) and
+            // oversized glow halos.
+            const float d_min = static_cast<float>( key_min ) - 4.0f;
+            const float d_max = static_cast<float>( key_max ) + 5.0f;
+
+            gpu_verts_.clear();
+            gpu_runs_.clear();
+            shadow_verts_.clear();
+            const auto begin_gpu_run = [&]( SDL_Texture * tex ) {
+                if( !gpu_runs_.empty() && gpu_runs_.back().tex == tex ) {
+                    return;
+                }
+                if( !gpu_runs_.empty() ) {
+                    gpu_runs_.back().count =
+                        static_cast<int>( gpu_verts_.size() ) - gpu_runs_.back().begin;
+                }
+                gpu_runs_.push_back( scene_gpu_pass::run{
+                    tex, static_cast<int>( gpu_verts_.size() ), 0 } );
+            };
+            // recv: blocks and creature billboards receive shadow-map
+            // shading; emissive glows and small markers do not.
+            const auto pack = [&]( const float recv ) {
+                render_3d::pack_gpu_vertices( gpu_scratch_, cam, viewport.x, viewport.y,
+                                              viewport.w, viewport.h, d_min, d_max,
+                                              recv, ls, gpu_verts_ );
+                gpu_scratch_.clear();
+            };
+            for( const std::vector<draw_entry> &bucket : buckets_ ) {
+                // Same two-phase per-bucket order as the CPU path: colored
+                // geometry, then sprites grouped by atlas sheet.
+                begin_gpu_run( nullptr );
+                for( const draw_entry &e : bucket ) {
+                    switch( e.kind ) {
+                        case entry_kind::billboard:
+                            if( e.tex == nullptr ) {
+                                render_3d::emit_billboard( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                           e.base_h, e.color );
+                                pack( 1.0f );
+                            }
+                            break;
+                        case entry_kind::marker:
+                            render_3d::emit_marker( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                    e.base_h, e.color );
+                            pack( 0.0f );
+                            break;
+                        case entry_kind::glow:
+                            render_3d::emit_glow( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                  e.base_h, e.top_h, e.color );
+                            pack( 0.0f );
+                            break;
+                        case entry_kind::block:
+                        default: {
+                            if( e.tex == nullptr ) {
+                                const render_3d::block_shading shading{ e.ao, env_.face_south,
+                                                                        env_.face_east };
+                                render_3d::emit_block_shaded( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                              e.base_h, e.top_h, e.color, shading );
+                            } else {
+                                render_3d::emit_block_sides( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                             e.base_h, e.top_h, e.color,
+                                                             env_.face_south, env_.face_east );
+                            }
+                            pack( 1.0f );
+                            // Opaque blocks are the sun shadow casters;
+                            // translucent overlays (fields) cast nothing.
+                            if( shadows && e.color.a == 255 ) {
+                                render_3d::emit_block_light_space( shadow_verts_, ls, e.dx, e.dy,
+                                                                   e.dz, e.base_h, e.top_h );
+                            }
+                            break;
+                        }
+                    }
+                }
+                for( const draw_entry &e : bucket ) {
+                    if( e.tex == nullptr ) {
+                        continue;
+                    }
+                    begin_gpu_run( e.tex );
+                    if( e.kind == entry_kind::block ) {
+                        render_3d::emit_block_top_textured( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                            e.top_h, e.tint, e.ao, e.uv );
+                        pack( 1.0f );
+                    } else if( e.kind == entry_kind::billboard ) {
+                        render_3d::emit_sprite_billboard( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                          e.base_h, e.aspect, e.tint, e.uv );
+                        pack( 1.0f );
+                    }
+                }
+            }
+            if( !gpu_runs_.empty() ) {
+                gpu_runs_.back().count =
+                    static_cast<int>( gpu_verts_.size() ) - gpu_runs_.back().begin;
+            }
+
+            SDL_Texture *const scene_tex = gpu_pass_.render( renderer, viewport.w, viewport.h,
+                                           gpu_verts_, gpu_runs_,
+                                           shadow_verts_, shadows );
+            if( !scene_tex ) {
+                return false;
+            }
+            const SDL_FRect src{ 0.0f, 0.0f,
+                                 static_cast<float>( viewport.w ),
+                                 static_cast<float>( viewport.h ) };
+            const SDL_FRect dst{ static_cast<float>( viewport.x ),
+                                 static_cast<float>( viewport.y ),
+                                 static_cast<float>( viewport.w ),
+                                 static_cast<float>( viewport.h ) };
+            return printErrorIf( !SDL_RenderTexture( renderer.get(), scene_tex, &src, &dst ),
+                                 "draw_gpu_scene: composite failed" ) ? false : true;
+        }
+
         // Post-process the finished 3D viewport through the SCENE_POST
         // fragment shader (FXAA) when the SDL3 GPU render driver is active:
         // copy the viewport out of the current render target into a scratch
@@ -4647,6 +4815,16 @@ class block_3d_world_renderer : public world_renderer
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
         overlay_frame_snapshot overlay_scratch_;
+        bool gpu_scene_try_ = false;
+        float sun_shadow_x_ = 0.0f;
+        float sun_shadow_y_ = 0.0f;
+#if SDL_MAJOR_VERSION >= 3
+        scene_gpu_pass gpu_pass_;
+        std::vector<render_3d::gpu_vtx> gpu_verts_;
+        std::vector<scene_gpu_pass::run> gpu_runs_;
+        std::vector<float> shadow_verts_;
+        std::vector<render_3d::vtx> gpu_scratch_;
+#endif
         render_3d::light_env env_;
         bool sun_up_ = false;
         int sun_step_x_ = 0;

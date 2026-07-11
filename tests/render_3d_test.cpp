@@ -491,3 +491,162 @@ TEST_CASE( "render_3d_light_factor", "[render_3d]" )
     CHECK( over.r == 255 );
     CHECK( over.a == 128 );
 }
+
+TEST_CASE( "render_3d_world_from_projected_roundtrip", "[render_3d]" )
+{
+    // world_from_projected must invert project() exactly (up to float
+    // noise) given the vertex's fractional view depth, including on tile
+    // widths where block_h is not exactly twice quarter_w.
+    for( const int tw : {
+             32, 34, 20
+         } ) {
+        render_3d::camera cam;
+        cam.tile_width = tw;
+        cam.origin_x = 321;
+        cam.origin_y = 87;
+        const float world[][3] = {
+            { 0.0f, 0.0f, 0.0f },
+            { 3.0f, -2.0f, 1.5f },
+            { -4.25f, 7.5f, -3.125f },
+            { 0.5f, 0.5f, 0.125f },
+        };
+        for( const auto &w : world ) {
+            const render_3d::fpoint p = render_3d::project( cam, w[0], w[1], w[2] );
+            float wx = 0.0f;
+            float wy = 0.0f;
+            float wz = 0.0f;
+            render_3d::world_from_projected( cam, p.x, p.y, w[0] + w[1] + w[2],
+                                             wx, wy, wz );
+            CHECK( wx == Approx( w[0] ).margin( 0.001 ) );
+            CHECK( wy == Approx( w[1] ).margin( 0.001 ) );
+            CHECK( wz == Approx( w[2] ).margin( 0.001 ) );
+        }
+    }
+}
+
+TEST_CASE( "render_3d_vertex_view_depth", "[render_3d]" )
+{
+    // Every emitter fills vtx::d with the world x + y + z of the vertex,
+    // consistent with world_from_projected recovering the position.
+    const render_3d::camera cam = test_camera();
+    std::vector<render_3d::vtx> out;
+    render_3d::emit_block_shaded( out, cam, 2, 3, -1, 0.0f, 1.0f,
+                                  render_3d::rgba{ 200, 100, 50, 255 },
+                                  render_3d::block_shading{} );
+    REQUIRE( out.size() >= 6 );
+    // First vertex: top-face north corner (2, 3, -1 + 1.0).
+    CHECK( out[0].d == Approx( 2.0f + 3.0f - 1.0f + 1.0f ) );
+    for( const render_3d::vtx &v : out ) {
+        float wx = 0.0f;
+        float wy = 0.0f;
+        float wz = 0.0f;
+        render_3d::world_from_projected( cam, v.x, v.y, v.d, wx, wy, wz );
+        // Recovered positions sit on the emitted block's corner lattice.
+        CHECK( wx >= 1.99f );
+        CHECK( wx <= 3.01f );
+        CHECK( wy >= 2.99f );
+        CHECK( wy <= 4.01f );
+        CHECK( wz >= -1.01f );
+        CHECK( wz <= 0.01f );
+    }
+}
+
+TEST_CASE( "render_3d_sun_light_space", "[render_3d]" )
+{
+    render_3d::light_space ls;
+    // Late-afternoon sun in the west: shadows displace east (+x).
+    REQUIRE( render_3d::sun_light_space( 1.5f, 0.0f,
+                                         -10.0f, -10.0f, -2.0f, 10.0f, 10.0f, 3.0f, ls ) );
+
+    // Every corner of the fitted box maps into [0, 1] on all three axes.
+    for( int i = 0; i < 8; i++ ) {
+        const float wx = ( i & 1 ) != 0 ? 10.0f : -10.0f;
+        const float wy = ( i & 2 ) != 0 ? 10.0f : -10.0f;
+        const float wz = ( i & 4 ) != 0 ? 3.0f : -2.0f;
+        float u = 0.0f;
+        float v = 0.0f;
+        float d = 0.0f;
+        ls.apply( wx, wy, wz, u, v, d );
+        CHECK( u >= 0.0f );
+        CHECK( u <= 1.0f );
+        CHECK( v >= 0.0f );
+        CHECK( v <= 1.0f );
+        CHECK( d >= 0.0f );
+        CHECK( d <= 1.0f );
+    }
+
+    // Points along one light ray share a shadow-map texel and get deeper
+    // (further from the sun) as they descend toward the ground: the wall
+    // top at (0, 0, 1) shades the ground point at (1.5, 0, 0).
+    float u0 = 0.0f;
+    float v0 = 0.0f;
+    float d0 = 0.0f;
+    float u1 = 0.0f;
+    float v1 = 0.0f;
+    float d1 = 0.0f;
+    ls.apply( 0.0f, 0.0f, 1.0f, u0, v0, d0 );
+    ls.apply( 1.5f, 0.0f, 0.0f, u1, v1, d1 );
+    CHECK( u1 == Approx( u0 ).margin( 0.0001 ) );
+    CHECK( v1 == Approx( v0 ).margin( 0.0001 ) );
+    CHECK( d1 > d0 );
+
+    // Degenerate box refuses.
+    render_3d::light_space bad;
+    CHECK_FALSE( render_3d::sun_light_space( 1.0f, 0.0f,
+                 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, bad ) );
+}
+
+TEST_CASE( "render_3d_pack_gpu_vertices", "[render_3d]" )
+{
+    render_3d::camera cam;
+    cam.tile_width = 32;
+    cam.origin_x = 100;
+    cam.origin_y = 100;
+    render_3d::light_space ls;
+    REQUIRE( render_3d::sun_light_space( 1.0f, 0.5f,
+                                         -20.0f, -20.0f, -5.0f, 20.0f, 20.0f, 5.0f, ls ) );
+
+    std::vector<render_3d::vtx> in;
+    render_3d::emit_block( in, cam, 0, 0, 0, 0.0f, 1.0f,
+                           render_3d::rgba{ 10, 20, 30, 255 } );
+    render_3d::emit_block( in, cam, 3, 3, 0, 0.0f, 1.0f,
+                           render_3d::rgba{ 10, 20, 30, 255 } );
+
+    std::vector<render_3d::gpu_vtx> out;
+    render_3d::pack_gpu_vertices( in, cam, 40, 60, 120, 80,
+                                  -10.0f, 12.0f, 1.0f, ls, out );
+    REQUIRE( out.size() == in.size() );
+
+    for( size_t i = 0; i < out.size(); i++ ) {
+        // NDC from viewport-local pixels, +y up.
+        const float lx = ( in[i].x - 40.0f ) / 120.0f * 2.0f - 1.0f;
+        const float ly = -( ( in[i].y - 60.0f ) / 80.0f * 2.0f - 1.0f );
+        CHECK( out[i].x == Approx( lx ).margin( 0.0001 ) );
+        CHECK( out[i].y == Approx( ly ).margin( 0.0001 ) );
+        CHECK( out[i].recv == 1.0f );
+        // Color passes through exactly as emitted (already face-shaded).
+        CHECK( out[i].r == in[i].c.r );
+        CHECK( out[i].a == in[i].c.a );
+        // Light coords equal transforming the recovered world position.
+        float wx = 0.0f;
+        float wy = 0.0f;
+        float wz = 0.0f;
+        render_3d::world_from_projected( cam, in[i].x, in[i].y, in[i].d, wx, wy, wz );
+        float lu = 0.0f;
+        float lv = 0.0f;
+        float ld = 0.0f;
+        ls.apply( wx, wy, wz, lu, lv, ld );
+        CHECK( out[i].lu == Approx( lu ).margin( 0.0001 ) );
+        CHECK( out[i].ld == Approx( ld ).margin( 0.0001 ) );
+    }
+
+    // The second block sits deeper into the scene (larger view depth), so
+    // it must get a smaller depth z than the first block's same corner.
+    CHECK( out[in.size() / 2].z < out[0].z );
+
+    // Shadow casters in light space: 6 faces x 2 triangles x 3 vertices x
+    // 3 floats.
+    std::vector<float> shadow;
+    render_3d::emit_block_light_space( shadow, ls, 0, 0, 0, 0.0f, 1.0f );
+    CHECK( shadow.size() == 6u * 2u * 3u * 3u );
+}
