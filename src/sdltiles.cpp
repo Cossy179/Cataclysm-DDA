@@ -3912,25 +3912,13 @@ class block_3d_world_renderer : public world_renderer
                                   render_3d::rgba{ 255, 255, 255, 255 }, entry_kind::billboard } );
             }
 
-            // Cursor and highlight overlays deferred by game::draw_cursor /
-            // draw_highlight; taking them also drains the animation queues
-            // only the sprite renderer plays, so nothing accumulates.
+            // Overlay and animation state deferred through cata_tiles by
+            // the game loop: cursors, highlights, explosions, bullets, hit
+            // flashes, trajectory lines, zone previews and async anims all
+            // render here through the same depth buckets.
             if( tilecontext ) {
-                cursor_scratch_.clear();
-                highlight_scratch_.clear();
-                tilecontext->take_overlay_queues( cursor_scratch_, highlight_scratch_ );
-                for( const tripoint_bub_ms &cp : cursor_scratch_ ) {
-                    push( draw_entry{ cp.x() - center.x(), cp.y() - center.y(),
-                                      cp.z() - center.z(), 0.125f, 0.0f,
-                                      render_3d::rgba{ 230, 255, 255, 230 },
-                                      entry_kind::billboard } );
-                }
-                for( const tripoint_bub_ms &hp : highlight_scratch_ ) {
-                    push( draw_entry{ hp.x() - center.x(), hp.y() - center.y(),
-                                      hp.z() - center.z(), 0.125f, 0.0f,
-                                      render_3d::rgba{ 255, 220, 60, 200 },
-                                      entry_kind::marker } );
-                }
+                tilecontext->take_overlay_frame( overlay_scratch_ );
+                emit_overlay_frame( overlay_scratch_, center, push );
             }
 
             verts_.clear();
@@ -4464,12 +4452,107 @@ class block_3d_world_renderer : public world_renderer
             return true;
         }
 
+        // Draw one frame's snapshot of the deferred overlay/animation state
+        // in this backend's visual language: glows for area effects, markers
+        // for points, billboards for sprites.  Positions carry real z, so
+        // depth bucketing handles occlusion like any other geometry.
+        template<typename PushFn>
+        void emit_overlay_frame( const overlay_frame_snapshot &ov,
+                                 const tripoint_bub_ms &center, const PushFn &push ) {
+            const auto rel = [&]( const tripoint_bub_ms & p, const float base_h,
+                                  const float top_h, const render_3d::rgba & color,
+            const entry_kind kind ) {
+                return draw_entry{ p.x() - center.x(), p.y() - center.y(),
+                                   p.z() - center.z(), base_h, top_h, color, kind };
+            };
+            for( const tripoint_bub_ms &cp : ov.cursors ) {
+                push( rel( cp, 0.125f, 0.0f, render_3d::rgba{ 230, 255, 255, 230 },
+                           entry_kind::billboard ) );
+            }
+            for( const tripoint_bub_ms &hp : ov.highlights ) {
+                push( rel( hp, 0.125f, 0.0f, render_3d::rgba{ 255, 220, 60, 200 },
+                           entry_kind::marker ) );
+            }
+            if( ov.explosion ) {
+                // Center flash plus the same growing rings the sprite frame
+                // draws (every ring below the current radius).
+                const render_3d::rgba fire{ 255, 140, 40, 140 };
+                push( rel( ov.explosion_pos, 0.5f, 2.0f, fire, entry_kind::glow ) );
+                render_3d::rgba ring_glow = fire;
+                ring_glow.a = 100;
+                for( int i = 1; i < ov.explosion_radius; i++ ) {
+                    const auto ring_cell = [&]( const point & off ) {
+                        push( rel( ov.explosion_pos + off, 0.25f, 1.5f, ring_glow,
+                                   entry_kind::glow ) );
+                    };
+                    for( int j = -i; j <= i; j++ ) {
+                        ring_cell( point( j, -i ) );
+                        ring_cell( point( j, i ) );
+                        if( j > -i && j < i ) {
+                            ring_cell( point( -i, j ) );
+                            ring_cell( point( i, j ) );
+                        }
+                    }
+                }
+            }
+            for( const auto &ce : ov.custom_explosion ) {
+                render_3d::rgba c = to_rgba( curses_color_to_SDL( ce.second ) );
+                c.a = 130;
+                push( rel( ce.first, 0.25f, 1.4f, c, entry_kind::glow ) );
+            }
+            if( ov.bullet ) {
+                // In flight, so the marker floats above the floor slab.
+                push( rel( ov.bullet_pos, 0.5f, 0.0f,
+                           render_3d::rgba{ 255, 240, 200, 255 }, entry_kind::marker ) );
+            }
+            for( const tripoint_bub_ms &hp : ov.hits ) {
+                push( rel( hp, 0.25f, 1.6f, render_3d::rgba{ 255, 40, 40, 140 },
+                           entry_kind::glow ) );
+                push( rel( hp, 0.125f, 0.0f, render_3d::rgba{ 255, 60, 60, 255 },
+                           entry_kind::marker ) );
+            }
+            if( !ov.line.empty() ) {
+                if( ov.line_body_visible ) {
+                    for( auto it = ov.line.begin(); it != ov.line.end() - 1; ++it ) {
+                        push( rel( *it, 0.25f, 0.0f,
+                                   render_3d::rgba{ 220, 220, 220, 180 },
+                                   entry_kind::marker ) );
+                    }
+                }
+                // The endpoint always draws, matching the sprite frame.
+                push( rel( ov.line.back(), 0.125f, 0.0f,
+                           render_3d::rgba{ 235, 235, 235, 220 },
+                           entry_kind::billboard ) );
+            }
+            if( ov.zones ) {
+                for( int y = ov.zone_start.y(); y <= ov.zone_end.y(); y++ ) {
+                    for( int x = ov.zone_start.x(); x <= ov.zone_end.x(); x++ ) {
+                        push( rel( tripoint_bub_ms( x, y, ov.zone_start.z() ),
+                                   0.125f, 1.2f, render_3d::rgba{ 80, 160, 255, 70 },
+                                   entry_kind::glow ) );
+                    }
+                }
+            }
+            for( const auto &anim : ov.async_anims ) {
+                draw_entry e = rel( anim.first, 0.125f, 0.0f,
+                                    render_3d::rgba{ 160, 200, 255, 220 },
+                                    entry_kind::billboard );
+                if( sprite_for( anim.second, e.tex, e.uv, e.aspect ) ) {
+                    e.tint = render_3d::grade( render_3d::rgba{ 255, 255, 255, 255 }, env_ );
+                } else {
+                    // No tileset sprite: fall back to a pale marker, as the
+                    // sprite frame simply skips unknown ids.
+                    e.kind = entry_kind::marker;
+                }
+                push( e );
+            }
+        }
+
         std::vector<std::vector<draw_entry>> buckets_;
         std::vector<render_3d::vtx> verts_;
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
-        std::vector<tripoint_bub_ms> cursor_scratch_;
-        std::vector<tripoint_bub_ms> highlight_scratch_;
+        overlay_frame_snapshot overlay_scratch_;
         render_3d::light_env env_;
         bool sun_up_ = false;
         int sun_step_x_ = 0;

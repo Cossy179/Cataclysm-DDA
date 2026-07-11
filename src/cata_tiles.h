@@ -571,6 +571,33 @@ int msgtype_to_tilecolor( game_message_type type, bool bOldMsg );
  */
 using color_block_overlay_container = std::pair<SDL_BlendMode, std::multimap<point, SDL_Color>>;
 
+/**
+ * One frame's worth of pending overlay/animation state, snapshotted out of
+ * cata_tiles for a non-sprite world renderer to draw.  All positions are
+ * map squares (real z), ready for depth-sorted emission.
+ */
+struct overlay_frame_snapshot {
+    std::vector<tripoint_bub_ms> cursors;
+    std::vector<tripoint_bub_ms> highlights;
+    bool explosion = false;
+    tripoint_bub_ms explosion_pos;
+    int explosion_radius = 0;
+    // c_black entries are already filtered out (they mean "no sprite").
+    std::vector<std::pair<tripoint_bub_ms, nc_color>> custom_explosion;
+    bool bullet = false;
+    tripoint_bub_ms bullet_pos;
+    // Positions of live creatures with an active hit flash.
+    std::vector<tripoint_bub_ms> hits;
+    // Trajectory line, endpoint last; empty when the target-line sees-gate
+    // hides it.  endpoint_visible distinguishes "hidden body, endpoint only".
+    std::vector<tripoint_bub_ms> line;
+    bool line_body_visible = false;
+    bool zones = false;
+    tripoint_bub_ms zone_start; // inclusive rect, zone_offset already applied
+    tripoint_bub_ms zone_end;
+    std::vector<std::pair<tripoint_bub_ms, std::string>> async_anims; // tile ids
+};
+
 class cata_tiles
 {
         friend class cata_tiles_test_helper;
@@ -808,13 +835,14 @@ class cata_tiles
         void draw_cursor();
         void void_cursor();
         /**
-         * For non-sprite world renderers: move out the pending cursor and
-         * highlight positions and void all other deferred animation state,
-         * so the queues render through that backend instead of silently
-         * accumulating.
+         * For non-sprite world renderers: snapshot the pending overlay and
+         * animation state so that backend can draw it, applying the same
+         * per-frame void policy as the sprite draw block.  Line, weather,
+         * sct, zones, cursor and highlight self-void each frame; hit voids
+         * by age; explosion, custom explosion, bullet and async anims stay
+         * owned by their game-side drivers/timeouts and are only copied.
          */
-        void take_overlay_queues( std::vector<tripoint_bub_ms> &cursors_out,
-                                  std::vector<tripoint_bub_ms> &highlights_out );
+        void take_overlay_frame( overlay_frame_snapshot &out );
 
         void init_draw_highlight( const tripoint_bub_ms &p );
         void draw_highlight();

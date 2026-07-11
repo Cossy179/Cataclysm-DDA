@@ -1,10 +1,12 @@
 #if defined(TILES)
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "avatar.h"
 #include "cata_catch.h"
+#include "cata_tiles.h"
 #include "coordinates.h"
 #include "enums.h"
 #include "map.h"
@@ -13,6 +15,7 @@
 #include "options_helpers.h"
 #include "player_helpers.h"
 #include "point.h"
+#include "sdl_geometry.h"
 #include "sdl_renderer_recovery.h"
 #include "sdl_wrappers.h"
 #include "sdltiles.h"
@@ -98,6 +101,62 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
                  here.get_visibility_variables_cache() ) == visibility_type::HIDDEN );
     you.memorize_terrain( here.get_abs( hidden ), "t_wall", 0, 0 );
     wr.draw_world( scene, overlay_strings, color_blocks );
+}
+
+// The overlay/animation snapshot the block_3d backend consumes each frame:
+// self-voiding kinds (cursor, zones) drain on take, driver-owned kinds
+// (explosion, bullet) persist until their driver voids them.
+TEST_CASE( "block_3d_overlay_frame_snapshot", "[tiles][render_3d]" )
+{
+    software_render_fixture fx;
+    if( !fx.available() ) {
+        WARN( "dummy SDL video backend unavailable; skipping" );
+        return;
+    }
+
+    clear_avatar();
+    clear_map();
+    avatar &you = get_avatar();
+    const tripoint_bub_ms origin = you.pos_bub();
+
+    tileset_cache cache;
+    GeometryRenderer_Ptr geom = std::make_unique<DefaultGeometryRenderer>();
+    cata_tiles tiles( get_sdl_renderer(), geom, cache );
+
+    tiles.init_draw_cursor( origin );
+    tiles.init_draw_zones( origin, origin + tripoint{ 1, 1, 0 },
+                           tripoint_rel_ms{ 1, 0, 0 } );
+    tiles.init_draw_bullet( origin, "animation_bullet_normal" );
+    tiles.init_explosion( origin, 2 );
+
+    overlay_frame_snapshot snap;
+    tiles.take_overlay_frame( snap );
+    REQUIRE( snap.cursors.size() == 1 );
+    CHECK( snap.cursors.front() == origin );
+    CHECK( snap.zones );
+    // The zone rect comes back with the offset applied at the player's z.
+    CHECK( snap.zone_start == origin + point( 1, 0 ) );
+    CHECK( snap.zone_end == origin + point( 2, 1 ) );
+    CHECK( snap.bullet );
+    CHECK( snap.bullet_pos == origin );
+    CHECK( snap.explosion );
+    CHECK( snap.explosion_pos == origin );
+    CHECK( snap.explosion_radius == 2 );
+
+    // Second take: cursor and zones self-voided on the first take, while
+    // the driver-owned explosion and bullet are still pending.
+    tiles.take_overlay_frame( snap );
+    CHECK( snap.cursors.empty() );
+    CHECK_FALSE( snap.zones );
+    CHECK( snap.bullet );
+    CHECK( snap.explosion );
+
+    // Driver voids end the driver-owned animations.
+    tiles.void_bullet();
+    tiles.void_explosion();
+    tiles.take_overlay_frame( snap );
+    CHECK_FALSE( snap.bullet );
+    CHECK_FALSE( snap.explosion );
 }
 
 #endif // TILES

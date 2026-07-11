@@ -4431,24 +4431,72 @@ void cata_tiles::void_cursor()
     cursors.clear();
 }
 
-void cata_tiles::take_overlay_queues( std::vector<tripoint_bub_ms> &cursors_out,
-                                      std::vector<tripoint_bub_ms> &highlights_out )
+void cata_tiles::take_overlay_frame( overlay_frame_snapshot &out )
 {
-    cursors_out.swap( cursors );
-    highlights_out.swap( highlights );
+    out = overlay_frame_snapshot();
+    out.cursors.swap( cursors );
+    out.highlights.swap( highlights );
     void_cursor();
     void_highlight();
-    // Animations this renderer doesn't play must still be drained so they
-    // can't accumulate while the sprite renderer is inactive.
-    void_explosion();
-    void_custom_explosion();
-    void_bullet();
-    void_hit();
+
+    // Explosion, custom explosion, bullet and async anims stay owned by
+    // their game-side drivers, which re-init them every frame and void
+    // them (or time them out) when the animation ends.
+    if( do_draw_explosion ) {
+        out.explosion = true;
+        out.explosion_pos = exp_pos;
+        out.explosion_radius = exp_rad;
+    }
+    if( do_draw_custom_explosion ) {
+        out.custom_explosion.reserve( custom_explosion_layer.size() );
+        for( const auto &pr : custom_explosion_layer ) {
+            // c_black without an explicit tile means "draw nothing".
+            if( !pr.second.tile_name && pr.second.color == c_black ) {
+                continue;
+            }
+            out.custom_explosion.emplace_back( pr.first, pr.second.color );
+        }
+    }
+    if( do_draw_bullet ) {
+        out.bullet = true;
+        out.bullet_pos = bul_pos;
+    }
+    if( do_draw_async_anim ) {
+        out.async_anims.reserve( async_anim_layer.size() );
+        for( const auto &anim : async_anim_layer ) {
+            out.async_anims.emplace_back( anim.first, anim.second );
+        }
+    }
+
+    // Hit flashes expire by age; keep only live creatures' positions.
+    if( do_draw_hit ) {
+        void_hit();
+        for( const hit_animation &hit : hit_animations ) {
+            if( const shared_ptr_fast<Creature> creature = hit.creature_ptr.lock() ) {
+                out.hits.push_back( creature->pos_bub() );
+            }
+        }
+    }
+
+    if( do_draw_line && !line_trajectory.empty() ) {
+        out.line_body_visible = !is_target_line ||
+                                get_player_view().sees( get_map(), line_pos );
+        out.line = std::move( line_trajectory );
+    }
     void_line();
+
+    if( do_draw_zones ) {
+        out.zones = true;
+        const int zone_z = get_player_character().pos_bub().z();
+        out.zone_start = tripoint_bub_ms( zone_start.xy() + zone_offset.xy(), zone_z );
+        out.zone_end = tripoint_bub_ms( zone_end.xy() + zone_offset.xy(), zone_z );
+    }
+    void_zones();
+
+    // Weather drops are screen-space cells in non-iso mode and SCT text
+    // renders through the overlay-strings path; both void unrendered here.
     void_weather();
     void_sct();
-    void_zones();
-    void_async_anim();
 }
 void cata_tiles::void_highlight()
 {
