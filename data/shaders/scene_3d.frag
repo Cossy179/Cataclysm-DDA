@@ -25,14 +25,16 @@ void main()
     vec4 c = v_color * texture(u_atlas, v_uv);
     if (v_recv > 0.5) {
         vec2 texel = 1.0 / vec2(textureSize(u_shadow, 0));
+        // 3x3 PCF: nine taps on a one-texel grid soften the shadow edge.
         float occluded = 0.0;
-        vec2 taps[4] = vec2[](vec2(-0.5, -0.5), vec2(0.5, -0.5),
-                              vec2(-0.5, 0.5), vec2(0.5, 0.5));
-        for (int i = 0; i < 4; i++) {
-            float nearest = texture(u_shadow, v_light.xy + taps[i] * texel).r;
-            occluded += (v_light.z - BIAS > nearest) ? 1.0 : 0.0;
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                vec2 off = vec2(float(dx), float(dy)) * texel;
+                float nearest = texture(u_shadow, v_light.xy + off).r;
+                occluded += (v_light.z - BIAS > nearest) ? 1.0 : 0.0;
+            }
         }
-        c.rgb *= 1.0 - SHADOW_STRENGTH * (occluded / 4.0);
+        c.rgb *= 1.0 - SHADOW_STRENGTH * (occluded / 9.0);
     }
     out_color = c;
 }

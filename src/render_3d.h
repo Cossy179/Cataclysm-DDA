@@ -330,10 +330,19 @@ bool sun_light_space( float shadow_x, float shadow_y,
                       light_space &out );
 
 /**
- * Emit all six faces of the block spanning cells (dx, dy, dz, base_h) to
- * (dx+1, dy+1, dz, top_h) directly in light space, as shadow-caster
- * triangles of (u, v, depth) triples appended to out (three floats per
- * vertex).  Depth-only geometry: no color, no winding significance.
+ * Emit all six faces of the axis-aligned world box spanning
+ * (wx0, wy0, wz0)..(wx1, wy1, wz1) (cells; z in blocks) directly in light
+ * space, as shadow-caster triangles of (u, v, depth) triples appended to
+ * out (three floats per vertex).  Depth-only geometry: no color, no
+ * winding significance.  Used for creature/avatar shadow casters.
+ */
+void emit_box_light_space( std::vector<float> &out, const light_space &ls,
+                           float wx0, float wy0, float wz0,
+                           float wx1, float wy1, float wz1 );
+
+/**
+ * emit_box_light_space for the unit block spanning cells
+ * (dx, dy, dz, base_h)..(dx+1, dy+1, dz, top_h).
  */
 void emit_block_light_space( std::vector<float> &out, const light_space &ls,
                              int dx, int dy, int dz, float base_h, float top_h );

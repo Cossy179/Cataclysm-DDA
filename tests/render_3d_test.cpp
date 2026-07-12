@@ -650,3 +650,38 @@ TEST_CASE( "render_3d_pack_gpu_vertices", "[render_3d]" )
     render_3d::emit_block_light_space( shadow, ls, 0, 0, 0, 0.0f, 1.0f );
     CHECK( shadow.size() == 6u * 2u * 3u * 3u );
 }
+
+TEST_CASE( "render_3d_box_light_space", "[render_3d]" )
+{
+    render_3d::light_space ls;
+    REQUIRE( render_3d::sun_light_space( 1.0f, 0.5f,
+                                         -20.0f, -20.0f, -5.0f, 20.0f, 20.0f, 5.0f, ls ) );
+
+    // emit_block_light_space is exactly emit_box_light_space over the unit
+    // block spanning the cell's corner lattice.
+    std::vector<float> from_block;
+    std::vector<float> from_box;
+    render_3d::emit_block_light_space( from_block, ls, 2, -3, 1, 0.0f, 0.5f );
+    render_3d::emit_box_light_space( from_box, ls, 2.0f, -3.0f, 1.0f,
+                                     3.0f, -2.0f, 1.5f );
+    REQUIRE( from_block.size() == from_box.size() );
+    REQUIRE( from_box.size() == 6u * 2u * 3u * 3u );
+    for( size_t i = 0; i < from_box.size(); i++ ) {
+        CHECK( from_block[i] == Approx( from_box[i] ) );
+    }
+
+    // A fractional creature-blob caster maps entirely inside the fitted
+    // shadow map, and its span reflects the requested box size.
+    std::vector<float> blob;
+    render_3d::emit_box_light_space( blob, ls, 0.25f, 0.25f, 0.0f,
+                                     0.75f, 0.75f, 1.2f );
+    REQUIRE( blob.size() == 6u * 2u * 3u * 3u );
+    for( size_t i = 0; i + 2 < blob.size(); i += 3 ) {
+        CHECK( blob[i] >= 0.0f );
+        CHECK( blob[i] <= 1.0f );
+        CHECK( blob[i + 1] >= 0.0f );
+        CHECK( blob[i + 1] <= 1.0f );
+        CHECK( blob[i + 2] >= 0.0f );
+        CHECK( blob[i + 2] <= 1.0f );
+    }
+}

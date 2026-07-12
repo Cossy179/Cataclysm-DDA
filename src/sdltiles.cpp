@@ -3921,9 +3921,11 @@ class block_3d_world_renderer : public world_renderer
             // The avatar is always drawn so the view stays navigable.
             {
                 const tripoint_bub_ms ppos = you.pos_bub();
-                push( draw_entry{ ppos.x() - center.x(), ppos.y() - center.y(),
-                                  ppos.z() - center.z(), 0.125f, 0.0f,
-                                  render_3d::rgba{ 255, 255, 255, 255 }, entry_kind::billboard } );
+                draw_entry e{ ppos.x() - center.x(), ppos.y() - center.y(),
+                              ppos.z() - center.z(), 0.125f, 0.0f,
+                              render_3d::rgba{ 255, 255, 255, 255 }, entry_kind::billboard };
+                e.caster = true;
+                push( e );
             }
 
             // Overlay and animation state deferred through cata_tiles by
@@ -4057,6 +4059,8 @@ class block_3d_world_renderer : public world_renderer
             render_3d::sprite_uv uv{};
             render_3d::rgba tint{};
             float aspect = 1.0f;
+            // Billboard entries only: cast a sun shadow (creatures, avatar).
+            bool caster = false;
         };
 
         struct tex_run {
@@ -4437,6 +4441,7 @@ class block_3d_world_renderer : public world_renderer
                                               render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light ),
                                               env_ );
             draw_entry e{ dx, dy, dz, foot_h, 0.0f, color, entry_kind::billboard };
+            e.caster = true;
             if( const monster *const mon = critter->as_monster() ) {
                 if( sprite_for( mon->type->id.str(), e.tex, e.uv, e.aspect ) ) {
                     e.tint = render_3d::grade(
@@ -4504,6 +4509,17 @@ class block_3d_world_renderer : public world_renderer
                 // geometry, then sprites grouped by atlas sheet.
                 begin_gpu_run( nullptr );
                 for( const draw_entry &e : bucket ) {
+                    // Creatures and the avatar cast a sun shadow: a short
+                    // box over the inner cell footprint, roughly a body's
+                    // volume, so the ground gets a soft contact shadow.
+                    if( shadows && e.kind == entry_kind::billboard && e.caster ) {
+                        const float cx = static_cast<float>( e.dx );
+                        const float cy = static_cast<float>( e.dy );
+                        const float cz = static_cast<float>( e.dz ) + e.base_h;
+                        render_3d::emit_box_light_space( shadow_verts_, ls,
+                                                         cx + 0.25f, cy + 0.25f, cz,
+                                                         cx + 0.75f, cy + 0.75f, cz + 1.2f );
+                    }
                     switch( e.kind ) {
                         case entry_kind::billboard:
                             if( e.tex == nullptr ) {

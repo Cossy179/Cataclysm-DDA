@@ -507,22 +507,19 @@ bool sun_light_space( const float shadow_x, const float shadow_y,
     return true;
 }
 
-void emit_block_light_space( std::vector<float> &out, const light_space &ls,
-                             const int dx, const int dy, const int dz,
-                             const float base_h, const float top_h )
+void emit_box_light_space( std::vector<float> &out, const light_space &ls,
+                           const float wx0, const float wy0, const float wz0,
+                           const float wx1, const float wy1, const float wz1 )
 {
-    // The block's eight corners in light space: index bit 0 -> +x,
+    // The box's eight corners in light space: index bit 0 -> +x,
     // bit 1 -> +y, bit 2 -> top instead of base.
     float cu[8];
     float cv[8];
     float cd[8];
-    const float fdx = static_cast<float>( dx );
-    const float fdy = static_cast<float>( dy );
-    const float fdz = static_cast<float>( dz );
     for( int i = 0; i < 8; i++ ) {
-        const float wx = fdx + ( ( i & 1 ) != 0 ? 1.0f : 0.0f );
-        const float wy = fdy + ( ( i & 2 ) != 0 ? 1.0f : 0.0f );
-        const float wz = fdz + ( ( i & 4 ) != 0 ? top_h : base_h );
+        const float wx = ( i & 1 ) != 0 ? wx1 : wx0;
+        const float wy = ( i & 2 ) != 0 ? wy1 : wy0;
+        const float wz = ( i & 4 ) != 0 ? wz1 : wz0;
         ls.apply( wx, wy, wz, cu[i], cv[i], cd[i] );
     }
     const auto tri = [&]( const int a, const int b, const int c ) {
@@ -546,6 +543,17 @@ void emit_block_light_space( std::vector<float> &out, const light_space &ls,
     quad( 2, 3, 7, 6 ); // south (+y)
     quad( 0, 2, 6, 4 ); // west (-x)
     quad( 1, 3, 7, 5 ); // east (+x)
+}
+
+void emit_block_light_space( std::vector<float> &out, const light_space &ls,
+                             const int dx, const int dy, const int dz,
+                             const float base_h, const float top_h )
+{
+    const float fdx = static_cast<float>( dx );
+    const float fdy = static_cast<float>( dy );
+    const float fdz = static_cast<float>( dz );
+    emit_box_light_space( out, ls, fdx, fdy, fdz + base_h,
+                          fdx + 1.0f, fdy + 1.0f, fdz + top_h );
 }
 
 void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
