@@ -580,6 +580,7 @@ void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
         g.a = v.c.a;
         g.u = v.u;
         g.v = v.v;
+        g.vd = v.d;
         float wx = 0.0f;
         float wy = 0.0f;
         float wz = 0.0f;

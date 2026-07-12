@@ -4582,9 +4582,10 @@ class block_3d_world_renderer : public world_renderer
                     static_cast<int>( gpu_verts_.size() ) - gpu_runs_.back().begin;
             }
 
+            const bool ssao = get_option<bool>( "WORLD_GPU_SSAO" );
             SDL_Texture *const scene_tex = gpu_pass_.render( renderer, viewport.w, viewport.h,
                                            gpu_verts_, gpu_runs_,
-                                           shadow_verts_, shadows );
+                                           shadow_verts_, shadows, ssao );
             if( !scene_tex ) {
                 return false;
             }

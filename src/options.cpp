@@ -2792,6 +2792,12 @@ void options_manager::add_options_graphics()
              true, COPT_CURSES_HIDE
            );
         get_option( "WORLD_GPU_SCENE" ).setPrerequisite( "WORLD_RENDERER", "block_3d" );
+
+        add( "WORLD_GPU_SSAO", page_id, to_translation( "3D ambient occlusion (SSAO)" ),
+             to_translation( "If true, the 3D GPU scene pass adds screen-space ambient occlusion, darkening the creases where geometry meets.  Requires the GPU scene pass." ),
+             true, COPT_CURSES_HIDE
+           );
+        get_option( "WORLD_GPU_SSAO" ).setPrerequisite( "WORLD_GPU_SCENE", "true" );
 #endif
         // FRAMEBUFFER_ACCEL only meaningful for the SDL2 software renderer
         // path; under SDL3 the renderer is hidden and software fallback is

@@ -358,6 +358,9 @@ struct gpu_vtx {
     uint8_t r = 0, g = 0, b = 0, a = 255;
     float u = 0.0f, v = 0.0f;
     float lu = 0.0f, lv = 0.0f, ld = 0.0f;
+    // Fractional view depth (world x + y + z), passed through for the
+    // screen-space AO pass to compare in block units.  Larger is nearer.
+    float vd = 0.0f;
 };
 
 /**

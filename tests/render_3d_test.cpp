@@ -623,6 +623,8 @@ TEST_CASE( "render_3d_pack_gpu_vertices", "[render_3d]" )
         const float ly = -( ( in[i].y - 60.0f ) / 80.0f * 2.0f - 1.0f );
         CHECK( out[i].x == Approx( lx ).margin( 0.0001 ) );
         CHECK( out[i].y == Approx( ly ).margin( 0.0001 ) );
+        // View depth passes straight through for the SSAO pass.
+        CHECK( out[i].vd == Approx( in[i].d ) );
         CHECK( out[i].recv == 1.0f );
         // Color passes through exactly as emitted (already face-shaded).
         CHECK( out[i].r == in[i].c.r );

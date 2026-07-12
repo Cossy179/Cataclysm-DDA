@@ -11,7 +11,11 @@ layout(location = 0) in vec4 v_color;
 layout(location = 1) in vec2 v_uv;
 layout(location = 2) in vec3 v_light;
 layout(location = 3) in float v_recv;
+layout(location = 4) in float v_vd;
 layout(location = 0) out vec4 out_color;
+// Second render target: view depth (block units) for the screen-space AO
+// pass. Background stays at the far sentinel this target is cleared to.
+layout(location = 1) out float out_depth;
 
 // Depth bias in normalized light-depth units, against shadow acne on
 // faces nearly parallel to the sun.
@@ -37,4 +41,5 @@ void main()
         c.rgb *= 1.0 - SHADOW_STRENGTH * (occluded / 9.0);
     }
     out_color = c;
+    out_depth = v_vd;
 }

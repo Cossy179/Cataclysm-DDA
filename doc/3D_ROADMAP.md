@@ -206,11 +206,13 @@ Strictly layered on top of the Phase 3 raster renderer; every step optional and 
 
 **Shadow-quality follow-up (implemented):** the sun shadow map now softens with a **3×3 PCF kernel** (nine taps) instead of four, and **creatures and the avatar cast shadows** — a body-sized box over each creature's cell footprint is emitted into the shadow map (`render_3d::emit_box_light_space`, the general fractional-box caster that `emit_block_light_space` now delegates to), so mobs drop a soft contact shadow on the ground.
 
+**Screen-space ambient occlusion (implemented):** the GPU main pass now writes view depth to a second render target (MRT), and a fullscreen pass (`data/shaders/scene_ssao.*`) darkens concave depth features — the recessed floors of walled alcoves, pits, and gaps between tall geometry. It measures local **concavity** (a symmetric second difference of view depth per axis) rather than raw nearness, so the axonometric floor's own smooth depth ramp reads as flat and is left untouched; only genuine depth valleys darken. The AO factor blends multiplicatively onto the scene, so the pass never reads the color it writes. Toggle: `WORLD_GPU_SSAO` (SDL3 GPU driver only, default on, gated on the GPU scene pass). Verified on lavapipe (a walled alcove floor darkens 124→106 while open floor stays 200→200).
+
 Staged next steps, in order of payoff-per-effort:
 
 1. **Cast shadows (remaining)** — cascaded/higher-res maps and slope-scaled bias for crisper penumbras, and point-light shadows for night scenes; the sun shadow map with soft PCF and creature casters covers the dominant daytime case.
 2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits. Pairs with tileset-textured faces.
-3. **Screen-space effects** — more passes on the now-open `SCENE_POST` lane: SSAO-style edge darkening, full-screen bloom (explosions, portal storms), sharpening/CRT looks. Effects needing scene depth wait for the raw-GPU-pipeline step.
+3. **Screen-space effects** — ✅ **SSAO shipped** (below). Remaining: full-screen bloom (explosions, portal storms), sharpening/CRT looks on the `SCENE_POST` lane.
 4. **Global illumination** — start with baked/irradiance approximations per chunk; the fully static terrain between bashes makes caching viable.
 5. **Ray tracing (optional high-end path)** — two candidate routes, to be decided when we get there:
    - **Software voxel ray marching** (à la Teardown): a natural fit since the world is literally a voxel grid; runs on any GPU with compute shaders; likely the pragmatic choice.
