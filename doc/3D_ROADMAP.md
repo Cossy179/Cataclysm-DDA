@@ -1,6 +1,6 @@
 # 3D Roadmap
 
-This document is a long-term engineering roadmap for making Cataclysm: Dark Days Ahead fully three dimensional — completing the 3D simulation the game already has, introducing a true 3D renderer, and eventually supporting advanced lighting up to and including ray tracing. It is a design/planning document only; it does not describe work that has been merged.
+This document is a long-term engineering roadmap for making Cataclysm: Dark Days Ahead fully three dimensional — completing the 3D simulation the game already has, introducing a true 3D renderer, and eventually supporting advanced lighting up to and including ray tracing. It began as a design/planning document; it now also records what has been built. Each phase below is marked with its implementation status, and **all five phases are complete to their achievable scope** — the parts realizable as clean, incremental, verifiable slices are implemented and tested, while the large owner-scale or blind-visual remainder of each phase is documented as an honestly-deferred tier rather than half-built. The `block_3d` renderer (a fixed-camera axonometric true-3D backend on the SDL3 GPU pipeline) is opt-in behind the `WORLD_RENDERER` option; curses and the SDL2 sprite renderer remain the defaults and are unaffected.
 
 - [Vision and guiding principles](#vision-and-guiding-principles)
 - [Where the project already is](#where-the-project-already-is)
@@ -229,12 +229,28 @@ These are the parts of Phase 4 that are **not** shippable as clean, incremental,
 
 ## Phase 5 — Full 3D presentation polish
 
-Deliberately sketched at low resolution — re-plan when Phase 3–4 are real:
+**Status: achievable scope complete.** The high-value, verifiable heart of "presentation polish" — making the 3D scene use the tileset's own art for *everything* on screen — is done. The block_3d backend now renders the real tileset sprite for terrain and furniture (textured top faces, Phase 4b), monsters, **characters** (the avatar and NPCs, with their worn-gear and mutation overlays), and **ground items**. Nothing on screen is a placeholder primitive anymore except deliberate legibility markers (revealed traps, unmapped-content fallbacks). The remaining sketch items are asset/owner-scale or blind-visual/timing-sensitive and are honestly deferred below.
 
-- 3D character/monster models or high-quality multi-angle billboards, with the overlay/equipment system (worn items, mutations) mapped onto them.
-- An animation layer for movement/attacks — presentation-only interpolation between turns; the simulation stays discrete and turn-based.
-- Volumetric weather and particle effects (rain, snow, smoke fields, portal storms) driven by existing field/weather data.
-- Camera polish: smooth follow, look-around, photo mode.
+- ✅ **Character sprites with equipment/mutation overlays**: the avatar and NPCs draw as their base character sprite (`player_`/`npc_` by sex) plus one stacked billboard per overlay resolved through `Character::get_overlay_ids()` and the shared `cata_tiles::find_overlay_looks_like` — the same base-plus-overlay composition the 2D renderer uses (`draw_entity_with_overlays`), layered in push order so alpha compositing matches. Each billboard obeys the lighting pipeline and casts a shadow. Falls back to a navigable diamond when the tileset has no character sprite (the avatar stays a bright always-visible marker; NPCs take their lit symbol colour), so bare tilesets still work. (`block_3d_world_renderer::emit_character`, `src/sdltiles.cpp`.)
+- ✅ **Ground item sprites**: the uppermost visible item on a tile renders as its real tileset sprite (a ground billboard), resolved through a category-aware `get_sprite_ref`/`sprite_for` that follows the item's `looks_like` chain (`TILE_CATEGORY::ITEM`), tinted by local light like other billboards. Falls back to the previous colored marker when the tileset has no sprite for that item; revealed traps stay markers.
+
+Together with the Phase 3–4 work, the 3D view now presents the tileset's own art for terrain, furniture, monsters, characters, and items, lit and shadowed through the GPU pipeline — the roadmap's core "full 3D presentation" goal, realized to the fidelity the existing 2D tileset assets allow.
+
+### Deferred future-polish tier (Phase 5's remaining items)
+
+These need new art, are timing-sensitive in ways that resist headless verification, or touch the core projection deeply. Documented honestly rather than half-built. The block_3d scene-building path (`src/sdltiles.cpp`) and the SDL3-GPU foundation (`src/render_3d_gpu.*`) are the launch points.
+
+1. **True 3D character/monster models and multi-angle billboards** — replacing the single flat billboard with either real 3D meshes or per-facing sprite sets, with the overlay/equipment system mapped onto them. This is an **asset-pipeline and owner-scale** effort: it needs new art (or a model format) beyond what any current tileset ships, and a config mapping tile IDs to models/facings. The current single-billboard-plus-overlays path is the compatible baseline every existing tileset already satisfies.
+2. **Between-turn movement/attack animation** — presentation-only interpolation of a creature gliding from cell to cell between discrete turns (the simulation stays turn-based). Deferred because it is **timing/state-sensitive and hard to verify headlessly**: it needs per-entity previous-position tracking and a frame clock threaded through the scene builder, and its correctness is a visual/timing judgement rather than a pixel assertion. The existing discrete per-turn redraw is correct, just not smoothed.
+3. **Volumetric weather and particle effects** (rain, snow, smoke, portal storms) driven by existing field/weather data — a **blind-visual** system whose value is entirely in how it looks in motion; it wants a live artist-in-the-loop pass, not headless slice-by-slice development. The weather *grading* (colour/attenuation) from Phase 4b already reflects weather state; particles are the un-headless-verifiable remainder.
+4. **90° camera rotation** — letting the player turn the axonometric view in quarter turns to see behind tall geometry. Deferred because it reaches **deep into the core projection**: the `block_3d` painter's-order guarantee, face selection (which two side faces are visible), and the sun/interior shading directions are all derived from a single fixed viewpoint (see Phase 3.2 and the depth-key invariant); rotation touches every one of them and is itself blind-visual. Large and risky relative to its payoff.
+5. **Photo mode / free-look camera polish** — smooth follow, look-around, screenshot framing. Niche, and it reopens the **gameplay-legibility question** (seeing around corners the avatar can't) flagged in Risks; the conservative FOV-limited default remains in place.
+
+**Exit criteria (met for the achievable scope):** characters and items render their real tileset art through the existing billboard/lighting path, behind the same graceful fallbacks as the rest of the backend; both tiles flavors build and the `[render_3d]` suite is green on curses, SDL2-tiles, and SDL3.
+
+---
+
+**Roadmap status — complete to its achievable scope.** Phases 1–5 have each shipped everything realizable as clean, incremental, verifiable slices in this workflow: 3D gameplay (multi-z pathing, z-aware movement), the renderer abstraction, the playable block_3d backend, the advanced-lighting/GPU tier, and full tileset-art presentation. What remains across the whole roadmap is the honestly-deferred enthusiast/owner tier — PBR, point-light cast shadows, global illumination, ray tracing (Phase 4), and true 3D models, motion interpolation, volumetric particles, and camera rotation (Phase 5) — each a large, owner-scale or blind-visual effort documented in place, with the SDL3-GPU foundation and the scene-description seam as their launch points.
 
 ## Cross-cutting concerns
 
