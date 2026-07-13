@@ -361,6 +361,9 @@ struct gpu_vtx {
     // Fractional view depth (world x + y + z), passed through for the
     // screen-space AO pass to compare in block units.  Larger is nearer.
     float vd = 0.0f;
+    // 1.0 for light-emitting geometry (fire, explosions, portal storms),
+    // routed to the bloom mask; 0.0 otherwise.
+    float emit = 0.0f;
 };
 
 /**
@@ -371,7 +374,7 @@ struct gpu_vtx {
  */
 void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
                         int view_x, int view_y, int view_w, int view_h,
-                        float d_min, float d_max, float recv,
+                        float d_min, float d_max, float recv, float emit,
                         const light_space &ls, std::vector<gpu_vtx> &out );
 
 } // namespace render_3d

@@ -558,7 +558,7 @@ void emit_block_light_space( std::vector<float> &out, const light_space &ls,
 
 void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
                         const int view_x, const int view_y, const int view_w, const int view_h,
-                        const float d_min, const float d_max, const float recv,
+                        const float d_min, const float d_max, const float recv, const float emit,
                         const light_space &ls, std::vector<gpu_vtx> &out )
 {
     const float w = std::max( static_cast<float>( view_w ), 1.0f );
@@ -581,6 +581,7 @@ void pack_gpu_vertices( const std::vector<vtx> &in, const camera &cam,
         g.u = v.u;
         g.v = v.v;
         g.vd = v.d;
+        g.emit = emit;
         float wx = 0.0f;
         float wy = 0.0f;
         float wz = 0.0f;

@@ -4061,6 +4061,8 @@ class block_3d_world_renderer : public world_renderer
             float aspect = 1.0f;
             // Billboard entries only: cast a sun shadow (creatures, avatar).
             bool caster = false;
+            // Light-emitting geometry (fire): feed the bloom mask.
+            bool emissive = false;
         };
 
         struct tex_run {
@@ -4251,8 +4253,10 @@ class block_3d_world_renderer : public world_renderer
                             fld_color = tile_color( fe->color() );
                             fld_color.a = 160;
                         }
-                        push( draw_entry{ dx, dy, dz, top_h, fld_top, fld_color,
-                                          entry_kind::block } );
+                        draw_entry fld_e{ dx, dy, dz, top_h, fld_top, fld_color,
+                                          entry_kind::block };
+                        fld_e.emissive = emissive;
+                        push( fld_e );
                         top_h = fld_top;
                     }
                     // Uppermost visible item and revealed traps as markers.
@@ -4497,11 +4501,12 @@ class block_3d_world_renderer : public world_renderer
                     tex, static_cast<int>( gpu_verts_.size() ), 0 } );
             };
             // recv: blocks and creature billboards receive shadow-map
-            // shading; emissive glows and small markers do not.
-            const auto pack = [&]( const float recv ) {
+            // shading; emissive glows and small markers do not. emit routes
+            // light-emitting geometry into the bloom mask.
+            const auto pack = [&]( const float recv, const float emit ) {
                 render_3d::pack_gpu_vertices( gpu_scratch_, cam, viewport.x, viewport.y,
                                               viewport.w, viewport.h, d_min, d_max,
-                                              recv, ls, gpu_verts_ );
+                                              recv, emit, ls, gpu_verts_ );
                 gpu_scratch_.clear();
             };
             for( const std::vector<draw_entry> &bucket : buckets_ ) {
@@ -4520,23 +4525,25 @@ class block_3d_world_renderer : public world_renderer
                                                          cx + 0.25f, cy + 0.25f, cz,
                                                          cx + 0.75f, cy + 0.75f, cz + 1.2f );
                     }
+                    const float emit = e.emissive ? 1.0f : 0.0f;
                     switch( e.kind ) {
                         case entry_kind::billboard:
                             if( e.tex == nullptr ) {
                                 render_3d::emit_billboard( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                            e.base_h, e.color );
-                                pack( 1.0f );
+                                pack( 1.0f, emit );
                             }
                             break;
                         case entry_kind::marker:
                             render_3d::emit_marker( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                     e.base_h, e.color );
-                            pack( 0.0f );
+                            pack( 0.0f, emit );
                             break;
                         case entry_kind::glow:
                             render_3d::emit_glow( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                   e.base_h, e.top_h, e.color );
-                            pack( 0.0f );
+                            // Glows are light halos: always feed the bloom mask.
+                            pack( 0.0f, 1.0f );
                             break;
                         case entry_kind::block:
                         default: {
@@ -4550,7 +4557,7 @@ class block_3d_world_renderer : public world_renderer
                                                              e.base_h, e.top_h, e.color,
                                                              env_.face_south, env_.face_east );
                             }
-                            pack( 1.0f );
+                            pack( 1.0f, emit );
                             // Opaque blocks are the sun shadow casters;
                             // translucent overlays (fields) cast nothing.
                             if( shadows && e.color.a == 255 ) {
@@ -4565,15 +4572,16 @@ class block_3d_world_renderer : public world_renderer
                     if( e.tex == nullptr ) {
                         continue;
                     }
+                    const float emit = e.emissive ? 1.0f : 0.0f;
                     begin_gpu_run( e.tex );
                     if( e.kind == entry_kind::block ) {
                         render_3d::emit_block_top_textured( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                             e.top_h, e.tint, e.ao, e.uv );
-                        pack( 1.0f );
+                        pack( 1.0f, emit );
                     } else if( e.kind == entry_kind::billboard ) {
                         render_3d::emit_sprite_billboard( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                           e.base_h, e.aspect, e.tint, e.uv );
-                        pack( 1.0f );
+                        pack( 1.0f, emit );
                     }
                 }
             }
@@ -4583,9 +4591,10 @@ class block_3d_world_renderer : public world_renderer
             }
 
             const bool ssao = get_option<bool>( "WORLD_GPU_SSAO" );
+            const bool bloom = get_option<bool>( "WORLD_GPU_BLOOM" );
             SDL_Texture *const scene_tex = gpu_pass_.render( renderer, viewport.w, viewport.h,
                                            gpu_verts_, gpu_runs_,
-                                           shadow_verts_, shadows, ssao );
+                                           shadow_verts_, shadows, ssao, bloom );
             if( !scene_tex ) {
                 return false;
             }

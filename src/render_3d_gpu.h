@@ -75,7 +75,7 @@ class scene_gpu_pass
                              const std::vector<render_3d::gpu_vtx> &main_verts,
                              const std::vector<run> &runs,
                              const std::vector<float> &shadow_verts,
-                             bool shadow_pass_wanted, bool ssao_wanted );
+                             bool shadow_pass_wanted, bool ssao_wanted, bool bloom_wanted );
 
     private:
         bool ensure_device_objects();
@@ -95,12 +95,15 @@ class scene_gpu_pass
         SDL_GPUGraphicsPipeline *main_pipeline_ = nullptr;
         SDL_GPUGraphicsPipeline *shadow_pipeline_ = nullptr;
         SDL_GPUGraphicsPipeline *ssao_pipeline_ = nullptr;
+        SDL_GPUGraphicsPipeline *bloom_pipeline_ = nullptr;
         SDL_GPUSampler *atlas_sampler_ = nullptr;
         SDL_GPUSampler *shadow_sampler_ = nullptr;
+        SDL_GPUSampler *linear_sampler_ = nullptr; // bilinear for bloom taps
         SDL_GPUTexture *shadow_map_ = nullptr;
         SDL_GPUTexture *shadow_depth_ = nullptr;
         SDL_GPUTexture *scene_depth_ = nullptr;
         SDL_GPUTexture *depth_linear_ = nullptr; // R32F view depth, AO source
+        SDL_GPUTexture *emissive_ = nullptr;     // BGRA emissive mask, bloom source
         SDL_Texture *scene_tex_ = nullptr;
         SDL_GPUTexture *scene_gpu_ = nullptr; // unwrapped from scene_tex_, not owned
         SDL_GPUTexture *white_gpu_ = nullptr; // owned pure-GPU 1x1 white

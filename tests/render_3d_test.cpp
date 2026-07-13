@@ -614,7 +614,7 @@ TEST_CASE( "render_3d_pack_gpu_vertices", "[render_3d]" )
 
     std::vector<render_3d::gpu_vtx> out;
     render_3d::pack_gpu_vertices( in, cam, 40, 60, 120, 80,
-                                  -10.0f, 12.0f, 1.0f, ls, out );
+                                  -10.0f, 12.0f, 1.0f, 1.0f, ls, out );
     REQUIRE( out.size() == in.size() );
 
     for( size_t i = 0; i < out.size(); i++ ) {
@@ -623,8 +623,10 @@ TEST_CASE( "render_3d_pack_gpu_vertices", "[render_3d]" )
         const float ly = -( ( in[i].y - 60.0f ) / 80.0f * 2.0f - 1.0f );
         CHECK( out[i].x == Approx( lx ).margin( 0.0001 ) );
         CHECK( out[i].y == Approx( ly ).margin( 0.0001 ) );
-        // View depth passes straight through for the SSAO pass.
+        // View depth passes straight through for the SSAO pass; emit for
+        // the bloom pass.
         CHECK( out[i].vd == Approx( in[i].d ) );
+        CHECK( out[i].emit == 1.0f );
         CHECK( out[i].recv == 1.0f );
         // Color passes through exactly as emitted (already face-shaded).
         CHECK( out[i].r == in[i].c.r );

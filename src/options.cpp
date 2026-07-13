@@ -2798,6 +2798,12 @@ void options_manager::add_options_graphics()
              true, COPT_CURSES_HIDE
            );
         get_option( "WORLD_GPU_SSAO" ).setPrerequisite( "WORLD_GPU_SCENE", "true" );
+
+        add( "WORLD_GPU_BLOOM", page_id, to_translation( "3D bloom" ),
+             to_translation( "If true, the 3D GPU scene pass makes light-emitting sources — fire, explosions, portal storms — bleed a soft glow into their surroundings.  Requires the GPU scene pass." ),
+             true, COPT_CURSES_HIDE
+           );
+        get_option( "WORLD_GPU_BLOOM" ).setPrerequisite( "WORLD_GPU_SCENE", "true" );
 #endif
         // FRAMEBUFFER_ACCEL only meaningful for the SDL2 software renderer
         // path; under SDL3 the renderer is hidden and software fallback is
