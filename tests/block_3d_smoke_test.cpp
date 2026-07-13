@@ -105,12 +105,14 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
     wr.draw_world( scene, overlay_strings, color_blocks );
 }
 
-// The character-sprite path: the avatar (with worn gear) and a nearby NPC
-// both route through emit_character, which composes a base character sprite
-// plus one billboard per resolved worn-item / mutation overlay. The bare
-// test tileset has no character sprites, so this exercises the overlay-id
-// traversal (Character::get_overlay_ids) and the diamond fallback without a
-// tileset — the frame must still render and stay navigable.
+// The character- and item-sprite paths: the avatar (with worn gear) and a
+// nearby NPC route through emit_character (base sprite plus one billboard per
+// resolved worn-item / mutation overlay), and a ground item routes through
+// the item-sprite lookup. The bare test tileset has no character or item
+// sprites, so this exercises the overlay-id traversal
+// (Character::get_overlay_ids), the item ITEM-category lookup, and the
+// diamond/marker fallbacks without a tileset — the frame must still render
+// and stay navigable.
 TEST_CASE( "block_3d_renderer_draws_characters", "[tiles][render_3d]" )
 {
     software_render_fixture fx;
@@ -131,6 +133,10 @@ TEST_CASE( "block_3d_renderer_draws_characters", "[tiles][render_3d]" )
 
     // A visible NPC one cell away reaches emit_creature -> emit_character.
     spawn_npc( you.pos_bub().xy() + point::east, "test_talker" );
+
+    // A ground item under the avatar drives the item-sprite path
+    // (sprite_for ITEM lookup, marker fallback with no tileset loaded).
+    here.add_item( you.pos_bub(), item( itype_id( "rock" ) ) );
     here.build_map_cache( 0 );
 
     override_option opt( "WORLD_RENDERER", "block_3d" );

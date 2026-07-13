@@ -1949,12 +1949,9 @@ cata_tiles::find_tile_with_season( const std::string &id ) const
     return tileset_ptr->find_tile_type_by_season( id, season );
 }
 
-bool cata_tiles::get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const
+bool cata_tiles::sprite_ref_from_res( std::optional<tile_lookup_res> res,
+                                      SDL_Texture *&tex, SDL_Rect &src ) const
 {
-    if( !tileset_ptr ) {
-        return false;
-    }
-    std::optional<tile_lookup_res> res = find_tile_with_season( id );
     if( !res ) {
         return false;
     }
@@ -1970,6 +1967,25 @@ bool cata_tiles::get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_R
     tex = sprite->get_texture_ptr().get();
     src = sprite->rect();
     return true;
+}
+
+bool cata_tiles::get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const
+{
+    if( !tileset_ptr ) {
+        return false;
+    }
+    return sprite_ref_from_res( find_tile_with_season( id ), tex, src );
+}
+
+bool cata_tiles::get_sprite_ref( const std::string &id, const TILE_CATEGORY category,
+                                 SDL_Texture *&tex, SDL_Rect &src ) const
+{
+    if( !tileset_ptr ) {
+        return false;
+    }
+    // Category-aware lookup so items, terrain, etc. follow their looks_like
+    // chain (find_tile_looks_like already tries the direct id first).
+    return sprite_ref_from_res( find_tile_looks_like( id, category, "" ), tex, src );
 }
 
 template<typename T>

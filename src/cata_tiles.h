@@ -628,6 +628,14 @@ class cata_tiles
         bool get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const;
 
         /**
+         * Category-aware variant of get_sprite_ref: resolves the id through
+         * the tileset's looks_like fallback chain for that category (used by
+         * the block_3d backend for item sprites, which lean on looks_like).
+         */
+        bool get_sprite_ref( const std::string &id, TILE_CATEGORY category,
+                             SDL_Texture *&tex, SDL_Rect &src ) const;
+
+        /**
          * Resolve a character overlay id (worn gear, mutations, …) to the draw
          * id of the sprite that represents it, honoring looks_like fallbacks.
          * Public so the block_3d backend can stack the same overlays the 2D
@@ -678,6 +686,10 @@ class cata_tiles
                                            int looks_like_jumps_limit ) const;
 
     private:
+        // Shared sprite extraction for the get_sprite_ref overloads: pulls the
+        // first fg sprite out of a resolved tile lookup.
+        bool sprite_ref_from_res( std::optional<tile_lookup_res> res,
+                                  SDL_Texture *&tex, SDL_Rect &src ) const;
         bool draw_from_id_string_internal( const std::string &id, const tripoint_bub_ms &pos, int subtile,
                                            int rota,
                                            lit_level ll, int retract, bool apply_night_vision_goggles, int &height_3d );

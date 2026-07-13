@@ -4271,11 +4271,23 @@ class block_3d_world_renderer : public world_renderer
                         push( fld_e );
                         top_h = fld_top;
                     }
-                    // Uppermost visible item and revealed traps as markers.
+                    // Uppermost visible item as its real tileset sprite (a
+                    // ground billboard), falling back to a colored marker when
+                    // the tileset has no sprite for it. Revealed traps below
+                    // stay markers.
                     if( here.sees_some_items( p, you ) ) {
                         const item &top_item = here.maptile_at( p ).get_uppermost_item();
-                        push( draw_entry{ dx, dy, dz, top_h, 0.0f, tile_color( top_item.color() ),
-                                          entry_kind::marker } );
+                        draw_entry ie{ dx, dy, dz, top_h, 0.0f, tile_color( top_item.color() ),
+                                       entry_kind::billboard };
+                        if( sprite_for( top_item.typeId().str(), TILE_CATEGORY::ITEM,
+                                        ie.tex, ie.uv, ie.aspect ) ) {
+                            const float light = render_3d::light_factor( here.ambient_light_at( p ) );
+                            ie.tint = render_3d::grade( render_3d::shade(
+                                                            render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
+                        } else {
+                            ie.kind = entry_kind::marker;
+                        }
+                        push( ie );
                     }
                     const trap &tr = here.tr_at( p );
                     if( !tr.is_null() && tr.can_see( p, you ) ) {
@@ -4799,6 +4811,27 @@ class block_3d_world_renderer : public world_renderer
             if( !tilecontext->get_sprite_ref( id, tex, src ) || src.w <= 0 || src.h <= 0 ) {
                 return false;
             }
+            return uv_from_src( tex, src, uv, aspect );
+        }
+
+        // Category-aware variant: resolves the id through the tileset's
+        // looks_like chain for that category (item sprites lean on it).
+        bool sprite_for( const std::string &id, const TILE_CATEGORY category,
+                         SDL_Texture *&tex, render_3d::sprite_uv &uv, float &aspect ) {
+            if( !tilecontext ) {
+                return false;
+            }
+            SDL_Rect src{};
+            if( !tilecontext->get_sprite_ref( id, category, tex, src ) || src.w <= 0 || src.h <= 0 ) {
+                return false;
+            }
+            return uv_from_src( tex, src, uv, aspect );
+        }
+
+        // Convert an atlas source rect to normalized UVs and aspect, caching
+        // each sheet's pixel dimensions.
+        bool uv_from_src( SDL_Texture *const tex, const SDL_Rect &src,
+                          render_3d::sprite_uv &uv, float &aspect ) {
             auto it = sheet_dims_.find( tex );
             if( it == sheet_dims_.end() ) {
                 int w = 0;
