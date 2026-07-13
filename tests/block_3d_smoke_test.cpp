@@ -9,9 +9,11 @@
 #include "cata_tiles.h"
 #include "coordinates.h"
 #include "enums.h"
+#include "item.h"
 #include "map.h"
 #include "map_helpers.h"
 #include "map_helpers_tests.h"
+#include "npc.h"
 #include "options_helpers.h"
 #include "player_helpers.h"
 #include "point.h"
@@ -101,6 +103,58 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
                  here.get_visibility_variables_cache() ) == visibility_type::HIDDEN );
     you.memorize_terrain( here.get_abs( hidden ), "t_wall", 0, 0 );
     wr.draw_world( scene, overlay_strings, color_blocks );
+}
+
+// The character-sprite path: the avatar (with worn gear) and a nearby NPC
+// both route through emit_character, which composes a base character sprite
+// plus one billboard per resolved worn-item / mutation overlay. The bare
+// test tileset has no character sprites, so this exercises the overlay-id
+// traversal (Character::get_overlay_ids) and the diamond fallback without a
+// tileset — the frame must still render and stay navigable.
+TEST_CASE( "block_3d_renderer_draws_characters", "[tiles][render_3d]" )
+{
+    software_render_fixture fx;
+    if( !fx.available() ) {
+        WARN( "dummy SDL video backend unavailable; skipping" );
+        return;
+    }
+
+    clear_avatar();
+    clear_map();
+    map &here = get_map();
+    set_time_to_day();
+
+    avatar &you = get_avatar();
+    // Worn gear feeds Character::get_overlay_ids(); with no tileset loaded
+    // the overlays resolve to nothing but the traversal still runs.
+    you.wear_item( item( itype_id( "jeans" ) ), false );
+
+    // A visible NPC one cell away reaches emit_creature -> emit_character.
+    spawn_npc( you.pos_bub().xy() + point::east, "test_talker" );
+    here.build_map_cache( 0 );
+
+    override_option opt( "WORLD_RENDERER", "block_3d" );
+    world_renderer &wr = get_active_world_renderer();
+    REQUIRE( wr.id() == "block_3d" );
+
+    constexpr int view_size = 64;
+    const render_scene scene{ point::zero, you.pos_bub(), view_size, view_size };
+    std::multimap<point, formatted_text> overlay_strings;
+    color_block_overlay_container color_blocks;
+    wr.draw_world( scene, overlay_strings, color_blocks );
+
+    std::vector<Uint32> pixels( static_cast<size_t>( view_size ) * view_size, 0 );
+    const SDL_Rect rect{ 0, 0, view_size, view_size };
+    REQUIRE( RenderReadPixels( get_sdl_renderer(), &rect, SDL_PIXELFORMAT_ARGB8888,
+                               pixels.data(), view_size * 4 ) );
+    int lit_pixels = 0;
+    for( const Uint32 px : pixels ) {
+        if( ( px & 0x00FFFFFF ) != 0 ) {
+            lit_pixels++;
+        }
+    }
+    // Avatar diamond (fallback) plus the NPC marker must land on the target.
+    CHECK( lit_pixels > 0 );
 }
 
 // The overlay/animation snapshot the block_3d backend consumes each frame:

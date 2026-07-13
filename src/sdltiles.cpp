@@ -3918,14 +3918,14 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
 
-            // The avatar is always drawn so the view stays navigable.
+            // The avatar is always drawn so the view stays navigable, as its
+            // real character sprite with worn-gear/mutation overlays (or a
+            // white diamond when the tileset has no character sprite).
             {
                 const tripoint_bub_ms ppos = you.pos_bub();
-                draw_entry e{ ppos.x() - center.x(), ppos.y() - center.y(),
-                              ppos.z() - center.z(), 0.125f, 0.0f,
-                              render_3d::rgba{ 255, 255, 255, 255 }, entry_kind::billboard };
-                e.caster = true;
-                push( e );
+                const float light = render_3d::light_factor( here.ambient_light_at( ppos ) );
+                emit_character( you, ppos.x() - center.x(), ppos.y() - center.y(),
+                                ppos.z() - center.z(), 0.125f, light, push );
             }
 
             // Overlay and animation state deferred through cata_tiles by
@@ -4466,6 +4466,52 @@ class block_3d_world_renderer : public world_renderer
             }
         }
 
+        // Draw a character (avatar or NPC) as its real tileset sprite plus
+        // the worn-item / mutation overlays the 2D renderer stacks
+        // (cata_tiles::draw_entity_with_overlays): a base billboard then one
+        // per resolved overlay, all at the same cell/foot so alpha
+        // compositing in push order layers them. Falls back to a colored
+        // diamond when the tileset has no character sprite.
+        template<typename PushFn>
+        void emit_character( const Character &ch, const int dx, const int dy, const int dz,
+                             const float foot_h, const float light, const PushFn &push ) {
+            const render_3d::rgba lit_white = render_3d::grade(
+                                                  render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
+            const std::string base_id = ch.is_npc()
+                                        ? ( ch.male ? "npc_male" : "npc_female" )
+                                        : ( ch.male ? "player_male" : "player_female" );
+            // Diamond fallback colour when the tileset has no character sprite:
+            // the avatar stays a bright always-visible marker so the view is
+            // navigable regardless of lighting, while NPCs take their lit
+            // symbol colour so they read as part of the world.
+            const render_3d::rgba diamond = ch.is_avatar()
+                                            ? render_3d::rgba{ 255, 255, 255, 255 }
+                                            :
+                                            render_3d::grade( render_3d::shade(
+                                                    to_rgba( curses_color_to_SDL( ch.symbol_color() ) ), light ), env_ );
+            draw_entry base{ dx, dy, dz, foot_h, 0.0f, diamond, entry_kind::billboard };
+            base.caster = true;
+            const bool have_sprite = sprite_for( base_id, base.tex, base.uv, base.aspect );
+            if( have_sprite ) {
+                base.tint = lit_white;
+            }
+            push( base );
+            // Overlays only make sense once the base is a real sprite.
+            if( have_sprite && tilecontext ) {
+                for( const std::pair<std::string, std::string> &ov : ch.get_overlay_ids() ) {
+                    std::string draw_id;
+                    if( !tilecontext->find_overlay_looks_like( ch.male, ov.first, ov.second, draw_id ) ) {
+                        continue;
+                    }
+                    draw_entry oe{ dx, dy, dz, foot_h, 0.0f, lit_white, entry_kind::billboard };
+                    if( sprite_for( draw_id, oe.tex, oe.uv, oe.aspect ) ) {
+                        oe.tint = lit_white;
+                        push( oe );
+                    }
+                }
+            }
+        }
+
         template<typename PushFn>
         void emit_creature( map &here, creature_tracker &creatures, const avatar &you,
                             const tripoint_bub_ms &p, const int dx, const int dy, const int dz,
@@ -4475,6 +4521,10 @@ class block_3d_world_renderer : public world_renderer
                 return;
             }
             const float light = render_3d::light_factor( here.ambient_light_at( p ) );
+            if( const Character *const ch = critter->as_character() ) {
+                emit_character( *ch, dx, dy, dz, foot_h, light, push );
+                return;
+            }
             const render_3d::rgba color = render_3d::grade(
                                               render_3d::shade( to_rgba( curses_color_to_SDL( critter->symbol_color() ) ), light ),
                                               env_ );

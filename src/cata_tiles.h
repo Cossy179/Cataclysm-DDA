@@ -627,6 +627,15 @@ class cata_tiles
          */
         bool get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const;
 
+        /**
+         * Resolve a character overlay id (worn gear, mutations, …) to the draw
+         * id of the sprite that represents it, honoring looks_like fallbacks.
+         * Public so the block_3d backend can stack the same overlays the 2D
+         * renderer composites. Returns false when the tileset has no sprite.
+         */
+        bool find_overlay_looks_like( bool male, const std::string &overlay, const std::string &variant,
+                                      std::string &draw_id );
+
         /** Draw to screen */
         void draw( const point &dest, const tripoint_bub_ms &center, int width, int height,
                    std::multimap<point, formatted_text> &overlay_strings,
@@ -667,9 +676,6 @@ class cata_tiles
         std::optional<tile_lookup_res>
         find_tile_looks_like_by_string_id( std::string_view id, TILE_CATEGORY category,
                                            int looks_like_jumps_limit ) const;
-
-        bool find_overlay_looks_like( bool male, const std::string &overlay, const std::string &variant,
-                                      std::string &draw_id );
 
     private:
         bool draw_from_id_string_internal( const std::string &id, const tripoint_bub_ms &pos, int subtile,
