@@ -4536,8 +4536,11 @@ class block_3d_world_renderer : public world_renderer
             };
             // recv: blocks and creature billboards receive shadow-map
             // shading; emissive glows and small markers do not. emit routes
-            // light-emitting geometry into the bloom mask.
+            // light-emitting geometry into the bloom mask; track whether any
+            // exists so the bloom pass can be skipped when nothing glows.
+            bool any_emissive = false;
             const auto pack = [&]( const float recv, const float emit ) {
+                any_emissive = any_emissive || emit > 0.5f;
                 render_3d::pack_gpu_vertices( gpu_scratch_, cam, viewport.x, viewport.y,
                                               viewport.w, viewport.h, d_min, d_max,
                                               recv, emit, ls, gpu_verts_ );
@@ -4625,7 +4628,10 @@ class block_3d_world_renderer : public world_renderer
             }
 
             const bool ssao = get_option<bool>( "WORLD_GPU_SSAO" );
-            const bool bloom = get_option<bool>( "WORLD_GPU_BLOOM" );
+            // Skip the fullscreen bloom pass entirely when nothing on screen
+            // emits — the common case — so it costs nothing without fire,
+            // explosions, or glowing fields in view.
+            const bool bloom = get_option<bool>( "WORLD_GPU_BLOOM" ) && any_emissive;
             SDL_Texture *const scene_tex = gpu_pass_.render( renderer, viewport.w, viewport.h,
                                            gpu_verts_, gpu_runs_,
                                            shadow_verts_, shadows, ssao, bloom );
