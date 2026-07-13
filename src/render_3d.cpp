@@ -31,7 +31,10 @@ void unproject( const camera &cam, const float sx, const float sy, const float p
 
 float light_factor( const float ambient )
 {
-    return std::clamp( 0.30f + 0.70f * std::min( ambient, 60.0f ) / 60.0f, 0.30f, 1.0f );
+    // Floor raised (0.45) and full brightness reached sooner (ambient 50)
+    // so dim-but-visible tiles stay legible in dark interiors and at night;
+    // daylight tiles are already at max and unaffected.
+    return std::clamp( 0.45f + 0.55f * std::min( ambient, 50.0f ) / 50.0f, 0.45f, 1.0f );
 }
 
 rgba shade( const rgba &c, const float f )

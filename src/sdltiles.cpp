@@ -3729,7 +3729,7 @@ class flat_color_world_renderer : public world_renderer
                             color = SDL_Color{ 192, 0, 192, 255 };
                             break;
                         case visibility_type::DARK:
-                            color = SDL_Color{ 32, 32, 32, 255 };
+                            color = SDL_Color{ 70, 70, 70, 255 };
                             break;
                         case visibility_type::HIDDEN:
                         default:
@@ -4106,8 +4106,10 @@ class block_3d_world_renderer : public world_renderer
                         return emit_memory( mt, dx, dy, dz, push );
                     }
                     if( vis == visibility_type::DARK ) {
-                        // Too dark to see but not unknown: gray shapes.
-                        base = render_3d::rgba{ 32, 32, 32, 255 };
+                        // Too dark to see but not unknown: dim gray shapes,
+                        // bright enough to make out the corridor layout in
+                        // the dark without reading as fully lit.
+                        base = render_3d::rgba{ 70, 70, 70, 255 };
                         break;
                     }
                     return 0.0f;

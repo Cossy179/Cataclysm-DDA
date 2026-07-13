@@ -474,8 +474,9 @@ TEST_CASE( "render_3d_memory_tint", "[render_3d]" )
 TEST_CASE( "render_3d_light_factor", "[render_3d]" )
 {
     // Floor for darkness, saturation at daylight, monotonic between.
-    CHECK( render_3d::light_factor( 0.0f ) == 0.30f );
-    CHECK( render_3d::light_factor( -5.0f ) == 0.30f );
+    CHECK( render_3d::light_factor( 0.0f ) == 0.45f );
+    CHECK( render_3d::light_factor( -5.0f ) == 0.45f );
+    CHECK( render_3d::light_factor( 50.0f ) == 1.0f );
     CHECK( render_3d::light_factor( 60.0f ) == 1.0f );
     CHECK( render_3d::light_factor( 120.0f ) == 1.0f );
     CHECK( render_3d::light_factor( 30.0f ) > render_3d::light_factor( 10.0f ) );
