@@ -471,6 +471,43 @@ TEST_CASE( "render_3d_memory_tint", "[render_3d]" )
     CHECK( white.b > white.r );  // the blue cast survives even from white
 }
 
+TEST_CASE( "render_3d_light_dir_face_shading", "[render_3d]" )
+{
+    float south = 0.0f;
+    float east = 0.0f;
+
+    // No direction or zero strength: neutral face defaults.
+    render_3d::light_dir_face_shading( 0.0f, 0.0f, 1.0f, south, east );
+    CHECK( south == Approx( render_3d::FACE_SOUTH ) );
+    CHECK( east == Approx( render_3d::FACE_EAST ) );
+    render_3d::light_dir_face_shading( 1.0f, 1.0f, 0.0f, south, east );
+    CHECK( south == Approx( render_3d::FACE_SOUTH ) );
+    CHECK( east == Approx( render_3d::FACE_EAST ) );
+
+    // Light due south (+y) brightens the south face; the east face gets
+    // the away-from-light minimum. Full strength.
+    render_3d::light_dir_face_shading( 0.0f, 1.0f, 1.0f, south, east );
+    CHECK( south == Approx( 0.90f ) ); // 0.55 + 0.35
+    CHECK( east == Approx( 0.55f ) );  // 0.55 + 0.35*max(0, 0)
+    CHECK( south > east );
+
+    // Light due east (+x) brightens the east face instead.
+    render_3d::light_dir_face_shading( 1.0f, 0.0f, 1.0f, south, east );
+    CHECK( east == Approx( 0.90f ) );
+    CHECK( south == Approx( 0.55f ) );
+    CHECK( east > south );
+
+    // Partial strength blends toward the neutral default.
+    float s_full = 0.0f;
+    float e_full = 0.0f;
+    float s_half = 0.0f;
+    float e_half = 0.0f;
+    render_3d::light_dir_face_shading( 0.0f, 1.0f, 1.0f, s_full, e_full );
+    render_3d::light_dir_face_shading( 0.0f, 1.0f, 0.5f, s_half, e_half );
+    CHECK( s_half < s_full );
+    CHECK( s_half > render_3d::FACE_SOUTH );
+}
+
 TEST_CASE( "render_3d_light_factor", "[render_3d]" )
 {
     // Floor for darkness, saturation at daylight, monotonic between.

@@ -3983,18 +3983,19 @@ class block_3d_world_renderer : public world_renderer
                                                       e.top_h, e.color );
                                 break;
                             case entry_kind::block:
-                            default:
+                            default: {
+                                const float fs = e.face_south >= 0.0f ? e.face_south : env_.face_south;
+                                const float fe = e.face_east >= 0.0f ? e.face_east : env_.face_east;
                                 if( e.tex == nullptr ) {
-                                    const render_3d::block_shading shading{ e.ao, env_.face_south,
-                                                                            env_.face_east };
+                                    const render_3d::block_shading shading{ e.ao, fs, fe };
                                     render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
                                                                   e.base_h, e.top_h, e.color, shading );
                                 } else {
                                     render_3d::emit_block_sides( verts_, cam, e.dx, e.dy, e.dz,
-                                                                 e.base_h, e.top_h, e.color,
-                                                                 env_.face_south, env_.face_east );
+                                                                 e.base_h, e.top_h, e.color, fs, fe );
                                 }
                                 break;
+                            }
                         }
                     }
                     for( const draw_entry &e : bucket ) {
@@ -4063,6 +4064,10 @@ class block_3d_world_renderer : public world_renderer
             bool caster = false;
             // Light-emitting geometry (fire): feed the bloom mask.
             bool emissive = false;
+            // Per-tile side-face brightness from a local interior light;
+            // negative means fall back to the per-frame env_ (sun) shading.
+            float face_south = -1.0f;
+            float face_east = -1.0f;
         };
 
         struct tex_run {
@@ -4173,6 +4178,9 @@ class block_3d_world_renderer : public world_renderer
                     top_h = 1.0f;
                     draw_entry e{ dx, dy, dz, 0.0f, top_h, tile_color( here.ter( p )->color() ),
                                   entry_kind::block };
+                    if( true_colors ) {
+                        apply_interior_light( here, p, e );
+                    }
                     attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
                 } else if( here.impassable( p ) ||
@@ -4192,6 +4200,7 @@ class block_3d_world_renderer : public world_renderer
                         for( float &ao : e.ao ) {
                             ao *= shadow;
                         }
+                        apply_interior_light( here, p, e );
                     }
                     attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
@@ -4207,6 +4216,7 @@ class block_3d_world_renderer : public world_renderer
                         for( float &ao : e.ao ) {
                             ao *= shadow;
                         }
+                        apply_interior_light( here, p, e );
                     }
                     attach_sprite( e, here.ter( p ).id().str() );
                     push( e );
@@ -4301,6 +4311,28 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
             return 1.0f;
+        }
+
+        // Per-tile side-face brightness from the local lightmap gradient,
+        // so interior lamps and fires light block faces directionally when
+        // there is no sun. Applied only at night / underground; with the
+        // sun up the per-frame sun shading (env_) governs instead. Writes
+        // face_south/east on the entry, or leaves them negative (use env_).
+        void apply_interior_light( map &here, const tripoint_bub_ms &p,
+                                   draw_entry &e ) const {
+            if( sun_up_ ) {
+                return;
+            }
+            const auto amb = [&here]( const tripoint_bub_ms & q ) {
+                return here.inbounds( q ) ? here.ambient_light_at( q ) : 0.0f;
+            };
+            // Gradient points toward brighter light, i.e. toward the source.
+            const float gx = amb( p + point::east ) - amb( p + point::west );
+            const float gy = amb( p + point::south ) - amb( p + point::north );
+            // A ~one-block light falloff of 12+ reads as fully directional.
+            const float strength = std::clamp(
+                                       std::sqrt( gx * gx + gy * gy ) / 12.0f, 0.0f, 1.0f );
+            render_3d::light_dir_face_shading( gx, gy, strength, e.face_south, e.face_east );
         }
 
         // Classic voxel contact shadows: darken top-face corners that
@@ -4549,15 +4581,15 @@ class block_3d_world_renderer : public world_renderer
                             break;
                         case entry_kind::block:
                         default: {
+                            const float fs = e.face_south >= 0.0f ? e.face_south : env_.face_south;
+                            const float fe = e.face_east >= 0.0f ? e.face_east : env_.face_east;
                             if( e.tex == nullptr ) {
-                                const render_3d::block_shading shading{ e.ao, env_.face_south,
-                                                                        env_.face_east };
+                                const render_3d::block_shading shading{ e.ao, fs, fe };
                                 render_3d::emit_block_shaded( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                               e.base_h, e.top_h, e.color, shading );
                             } else {
                                 render_3d::emit_block_sides( gpu_scratch_, cam, e.dx, e.dy, e.dz,
-                                                             e.base_h, e.top_h, e.color,
-                                                             env_.face_south, env_.face_east );
+                                                             e.base_h, e.top_h, e.color, fs, fe );
                             }
                             pack( 1.0f, emit );
                             // Opaque blocks are the sun shadow casters;

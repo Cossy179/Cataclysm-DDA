@@ -143,6 +143,18 @@ void sun_face_shading( bool sun_up, float shadow_x, float shadow_y, light_env &e
 void sun_step( float shadow_x, float shadow_y, int &step_x, int &step_y );
 
 /**
+ * Per-tile side-face brightness from a local light direction (interior
+ * lamps, fires) for scenes with no sun.  (to_light_x, to_light_y) is the
+ * horizontal direction toward the brightest nearby light — the lightmap
+ * gradient; strength in 0..1 is how directional that light is.  Faces
+ * turned toward the light brighten from the neutral FACE_SOUTH/FACE_EAST
+ * defaults; a zero direction or strength leaves them neutral.  Outputs
+ * are written to south and east.
+ */
+void light_dir_face_shading( float to_light_x, float to_light_y, float strength,
+                             float &south, float &east );
+
+/**
  * Soft directional shadow factor from the nearest sun-ward occluder:
  * distance 1 -> 0.55, 2 -> 0.72, 3 -> 0.86; anything else -> 1.0.
  */

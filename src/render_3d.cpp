@@ -77,6 +77,26 @@ void sun_face_shading( const bool sun_up, const float shadow_x, const float shad
     env.face_east = face( to_sun_x );
 }
 
+void light_dir_face_shading( const float to_light_x, const float to_light_y,
+                             const float strength, float &south, float &east )
+{
+    const float len = std::sqrt( to_light_x * to_light_x + to_light_y * to_light_y );
+    const float s = std::clamp( strength, 0.0f, 1.0f );
+    if( len <= 0.0f || s <= 0.0f ) {
+        south = FACE_SOUTH;
+        east = FACE_EAST;
+        return;
+    }
+    const float nx = to_light_x / len;
+    const float ny = to_light_y / len;
+    // South face normal (0, 1); east face normal (1, 0). A touch more
+    // contrast than the sun (0.35 vs 0.28) since interior lights are near.
+    const float lit_south = 0.55f + 0.35f * std::max( 0.0f, ny );
+    const float lit_east = 0.55f + 0.35f * std::max( 0.0f, nx );
+    south = FACE_SOUTH * ( 1.0f - s ) + lit_south * s;
+    east = FACE_EAST * ( 1.0f - s ) + lit_east * s;
+}
+
 void sun_step( const float shadow_x, const float shadow_y, int &step_x, int &step_y )
 {
     step_x = 0;
