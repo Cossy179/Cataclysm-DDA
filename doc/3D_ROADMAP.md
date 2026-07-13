@@ -181,10 +181,14 @@ Start constrained, then loosen:
 
 Strictly layered on top of the Phase 3 raster renderer; every step optional and toggleable.
 
-**Status: raster-feasible core implemented** on the `block_3d` backend (the steps below that need a GPU depth buffer or shaders wait for the Phase 3 GPU-API upgrade):
+**Status: achievable scope complete.** Everything realizable without a from-scratch GPU engine is implemented, GPU-verified on a software Vulkan device, and confirmed on real hardware in-game: the full raster core, the depth-buffered SDL_GPU pipeline, sun shadow maps (soft PCF + creature casters), FXAA, SSAO, bloom, and directional interior lighting. What remains — physically-based materials, true point-light cast shadows, global illumination, and ray tracing — is the **deferred enthusiast tier** documented at the end of this section: each is a large, owner-scale effort, and the SDL3-GPU foundation built here is the launch point for anyone who takes them on.
+
+The steps below need a GPU depth buffer or shaders and were unblocked by the Phase 3 GPU-API upgrade:
 
 - ✅ **Contact shadows (ambient occlusion)**: top-face corners that walls wrap around darken with classic voxel AO, interpolated across the face via per-vertex colors (`render_3d::corner_occlusion`, `emit_block_shaded`; neighbor sampling in `src/sdltiles.cpp`).
 - ✅ **Dynamic sun-direction shading**: the two visible side faces track the real sun azimuth through the day (`render_3d::sun_face_shading` driven by `sun_azimuth_altitude`) — east faces glow in the morning, south faces at midday, flat cool moonlight at night. Underground stays neutral.
+- ✅ **Directional interior lighting**: with no sun (night, underground), each tile derives a light direction from the game's own lightmap gradient (the brightness of its four neighbours) and shades its side faces toward the nearest lamp or fire (`render_3d::light_dir_face_shading`, per-tile `face_south`/`face_east` on the draw entry), so interiors read as 3D-lit rather than flat. Uniform rooms produce no spurious shading; gated to sunless scenes so it never fights the sun path outdoors.
+- ✅ **Dark-interior legibility**: the light floor was raised (`render_3d::light_factor`) and known-but-unlit terrain brightened, tuned against a real underground playtest so the 3D view stays readable in the dark without revealing genuinely-unseen tiles.
 - ✅ **Time-of-day color grading**: cool blue nights, warm golden-hour dawn/dusk (`render_3d::time_of_day_grading`/`grade`), applied to terrain and creatures; memory and emissive tiles are exempt by design.
 - ✅ **Alpha blending + translucency**: the triangle batch now blends (`RenderTriangles` sets `SDL_BLENDMODE_BLEND`); fields render as translucent overlays.
 - ✅ **Emissive light sources**: light-emitting fields (fire) render ungraded and unshaded at full color, keyed off the field's real `light_emitted` value, with a **three-layer soft bloom** of concentric translucent halos.
@@ -210,15 +214,16 @@ Strictly layered on top of the Phase 3 raster renderer; every step optional and 
 
 **Bloom (implemented):** a third MRT target carries an **emissive mask** — the main pass writes each pixel's color there only where light-emitting geometry is drawn (fire, explosion/portal-storm glows, colored-light halos), keyed off a per-vertex emissive flag (`render_3d::gpu_vtx::emit`, set through `pack_gpu_vertices`). A fullscreen pass (`data/shaders/scene_bloom.frag`, reusing the SSAO fullscreen vertex stage) blurs that mask with a multi-ring bilinear kernel and **additively** blends the glow onto the scene, so bright sources bleed light into their surroundings. It never reads the color it adds to. Toggle: `WORLD_GPU_BLOOM` (SDL3 GPU driver only, default on, gated on the GPU scene pass). Verified on lavapipe (a lone emissive tile brightens dark ground ~1 tile out, 60→91, and falls off to nothing far away). A downsample chain would widen the radius further without banding — noted for a follow-up.
 
-Staged next steps, in order of payoff-per-effort:
+### Deferred enthusiast tier (Phase 4's remaining items)
 
-1. **Cast shadows (remaining)** — cascaded/higher-res maps and slope-scaled bias for crisper penumbras, and point-light shadows for night scenes; the sun shadow map with soft PCF and creature casters covers the dominant daytime case.
-2. **Physically-based materials** — extend the asset JSON with roughness/metalness/emissive maps; ship sensible defaults derived from material types (`data/json/materials.json`) so unmodded content benefits. Pairs with tileset-textured faces.
-3. **Screen-space effects** — ✅ **SSAO and bloom shipped** (below). Remaining: sharpening/CRT looks on the `SCENE_POST` lane, and a downsample chain to widen the bloom radius further.
-4. **Global illumination** — start with baked/irradiance approximations per chunk; the fully static terrain between bashes makes caching viable.
-5. **Ray tracing (optional high-end path)** — two candidate routes, to be decided when we get there:
-   - **Software voxel ray marching** (à la Teardown): a natural fit since the world is literally a voxel grid; runs on any GPU with compute shaders; likely the pragmatic choice.
-   - **Hardware RT** (Vulkan RT / DXR via the chosen GPU API): higher fidelity, much higher implementation and maintenance cost; only worth it if a dedicated contributor owns it.
+These are the parts of Phase 4 that are **not** shippable as clean, incremental, verifiable slices in the current workflow — each is a large, owner-scale effort. They are documented here honestly rather than half-implemented. The SDL3-GPU foundation in `src/render_3d_gpu.*` (real pipelines, depth buffer, MRT, shadow-map + fullscreen-pass infrastructure, renderer-texture interop) is the launch point for all of them.
+
+1. **Physically-based materials (PBR)** — the largest remaining *visual* item and the most tractable to pick up next. Needs the asset-pipeline extension first (a `model_config.json`-style mapping of tile IDs to roughness/metalness/emissive, loaded beside tilesets), then per-material specular/roughness in the main fragment shader. Pairs with textured side faces (still a Phase 3 punt). This is the natural next major slice for a contributor who wants to keep pushing fidelity — it's bounded, it has clear inputs, and it builds directly on the existing textured-top-face path.
+2. **True point-light cast shadows** — walls casting shadow blobs from the player's lantern and from fires, in night/underground scenes. The engine's 2-D lightmap already models light *occlusion* (rooms behind walls stay dark), and the directional interior face-shading above captures the *look* of local lights, so this is polish rather than a gap — but real per-light cast shadows need omnidirectional shadow maps (a cube map or several projections) per dynamic light, which is a substantial addition to the single-sun shadow pass.
+3. **Global illumination** — baked/irradiance approximations per submap chunk (the static-between-bashes terrain makes caching viable) up to a full solver. Cannot be faked convincingly; wants a dedicated design pass. The concavity SSAO already provides a cheap contact-shadow approximation of ambient occlusion in the meantime.
+4. **Ray tracing (optional high-end path)** — software voxel ray marching (à la Teardown; the world is literally a voxel grid, runs on any compute-capable GPU) or hardware RT (Vulkan RT / DXR). Both are multi-week, owner-scale undertakings and only worth starting when a dedicated contributor owns the backend; the roadmap has always scoped them this way.
+
+**Smaller polish still open** (achievable, not yet done): a bloom downsample chain to widen the glow radius without banding; sharpening / CRT looks on the `SCENE_POST` lane; cascaded / higher-resolution sun shadow maps with slope-scaled bias for crisper penumbras.
 
 **Exit criteria per step:** each effect ships behind its own graphics option, defaults off or auto-detected, and the renderer degrades gracefully to the previous step's output on unsupported hardware.
 
