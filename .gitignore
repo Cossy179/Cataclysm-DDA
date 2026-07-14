@@ -51,6 +51,7 @@
 /font/
 /gfx/*
 !/gfx/ASCIITileset
+!/gfx/Block3D
 !/gfx/loading_screens
 !/gfx/Larwick_Overmap
 !/gfx/tile_config_template.json

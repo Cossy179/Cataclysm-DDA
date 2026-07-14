@@ -15,6 +15,7 @@
 #include "map_helpers_tests.h"
 #include "npc.h"
 #include "options_helpers.h"
+#include "path_info.h"
 #include "player_helpers.h"
 #include "point.h"
 #include "sdl_geometry.h"
@@ -103,6 +104,22 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
                  here.get_visibility_variables_cache() ) == visibility_type::HIDDEN );
     you.memorize_terrain( here.get_abs( hidden ), "t_wall", 0, 0 );
     wr.draw_world( scene, overlay_strings, color_blocks );
+}
+
+// The built-in entity sprite atlas the block_3d backend billboards in place
+// of diamonds when the tileset is ASCII-class must actually ship and load at
+// the runtime gfx path — otherwise the 3D view silently falls back to
+// diamonds again.
+TEST_CASE( "block_3d_entity_atlas_present", "[tiles][render_3d]" )
+{
+    const std::string path =
+        ( PATH_INFO::gfxdir() / "Block3D" / "entities.png" ).generic_u8string();
+    SDL_Surface_Ptr surf;
+    REQUIRE_NOTHROW( surf = load_image( path.c_str() ) );
+    REQUIRE( surf );
+    // 8x4 grid of 64px cells (tools/gfx/gen_block3d_sprites.py).
+    CHECK( surf->w == 512 );
+    CHECK( surf->h == 256 );
 }
 
 // The character- and item-sprite paths: the avatar (with worn gear) and a

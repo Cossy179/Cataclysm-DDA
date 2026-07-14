@@ -67,6 +67,7 @@
 #include "loading_ui.h"
 #include "field.h"
 #include "item.h"
+#include "item_category.h"
 #include "map.h"
 #include "map_extras.h"
 #include "map_memory.h"
@@ -4043,6 +4044,20 @@ class block_3d_world_renderer : public world_renderer
             ground_shadow // dark translucent contact-shadow decal on the ground
         };
 
+        // Fixed cell indices into the built-in entity atlas
+        // (gfx/Block3D/entities.png), mirroring the LAYOUT order in
+        // tools/gfx/gen_block3d_sprites.py. The source tree ships only ASCII
+        // art, so these give the 3D view real-looking people, monsters and
+        // items instead of bare diamonds.
+        enum class art : int {
+            player = 0, npc, zombie, human, skeleton, robot, child, hulk,
+            mammal, insect, spider, bird, reptile, fish, slime, fungus,
+            gun, melee, ammo, food, drink, clothing, tool, book,
+            container, chem, electronic, material, generic, corpse, plant, creature
+        };
+        static constexpr int art_cols = 8;
+        static constexpr int art_rows = 4;
+
         struct draw_entry {
             int dx = 0;
             int dy = 0;
@@ -4281,8 +4296,13 @@ class block_3d_world_renderer : public world_renderer
                         const item &top_item = here.maptile_at( p ).get_uppermost_item();
                         draw_entry ie{ dx, dy, dz, top_h, 0.0f, tile_color( top_item.color() ),
                                        entry_kind::billboard };
-                        if( sprite_for( top_item.typeId().str(), TILE_CATEGORY::ITEM,
-                                        ie.tex, ie.uv, ie.aspect ) ) {
+                        bool used_builtin = false;
+                        const std::string item_id = top_item.typeId().str();
+                        if( resolve_sprite( item_art( top_item ),
+                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                        return sprite_for( item_id, TILE_CATEGORY::ITEM, t, u, a );
+                        },
+                        ie.tex, ie.uv, ie.aspect, used_builtin ) ) {
                             const float light = render_3d::light_factor( here.ambient_light_at( p ) );
                             ie.tint = render_3d::grade( render_3d::shade(
                                                             render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
@@ -4520,14 +4540,21 @@ class block_3d_world_renderer : public world_renderer
                                                     to_rgba( curses_color_to_SDL( ch.symbol_color() ) ), light ), env_ );
             draw_entry base{ dx, dy, dz, foot_h, 0.0f, diamond, entry_kind::billboard };
             base.caster = true;
-            const bool have_sprite = sprite_for( base_id, base.tex, base.uv, base.aspect );
+            bool used_builtin = false;
+            const bool have_sprite = resolve_sprite(
+                                         character_art( ch ),
+            [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                return sprite_for( base_id, t, u, a );
+            },
+            base.tex, base.uv, base.aspect, used_builtin );
             if( have_sprite ) {
                 base.tint = lit_white;
             }
             push_ground_shadow( dx, dy, dz, foot_h, 0.72f, 115, push );
             push( base );
-            // Overlays only make sense once the base is a real sprite.
-            if( have_sprite && tilecontext ) {
+            // Overlays come from the tileset; skip them when the built-in
+            // character art is standing in (it is already clothed).
+            if( have_sprite && !used_builtin && tilecontext ) {
                 for( const std::pair<std::string, std::string> &ov : ch.get_overlay_ids() ) {
                     std::string draw_id;
                     if( !tilecontext->find_overlay_looks_like( ch.male, ov.first, ov.second, draw_id ) ) {
@@ -4561,7 +4588,13 @@ class block_3d_world_renderer : public world_renderer
             draw_entry e{ dx, dy, dz, foot_h, 0.0f, color, entry_kind::billboard };
             e.caster = true;
             if( const monster *const mon = critter->as_monster() ) {
-                if( sprite_for( mon->type->id.str(), e.tex, e.uv, e.aspect ) ) {
+                bool used_builtin = false;
+                const std::string mon_id = mon->type->id.str();
+                if( resolve_sprite( monster_art( *mon ),
+                [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                return sprite_for( mon_id, t, u, a );
+                },
+                e.tex, e.uv, e.aspect, used_builtin ) ) {
                     e.tint = render_3d::grade(
                                  render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
                 }
@@ -4893,6 +4926,221 @@ class block_3d_world_renderer : public world_renderer
             return true;
         }
 
+        // True when the active tileset is ASCII-class (tiny glyphs) or absent,
+        // so the built-in entity art should stand in for the tileset's own
+        // sprites. Real graphical tilesets (>=24px tiles) keep their art.
+        bool use_builtin_art() const {
+            return !tilecontext || tilecontext->get_tile_width() < 24;
+        }
+
+        // Load the built-in entity atlas once; reload if the renderer was
+        // recreated (device-loss recovery) so the texture never dangles.
+        void ensure_entity_atlas() {
+            SDL_Renderer *const cur = renderer ? renderer.get() : nullptr;
+            if( entity_atlas_renderer_ == cur && ( entity_atlas_ || entity_atlas_failed_ ) ) {
+                return;
+            }
+            entity_atlas_.reset();
+            entity_atlas_failed_ = false;
+            entity_atlas_renderer_ = cur;
+            if( !renderer ) {
+                entity_atlas_failed_ = true;
+                return;
+            }
+            try {
+                const std::string path =
+                    ( PATH_INFO::gfxdir() / "Block3D" / "entities.png" ).generic_u8string();
+                SDL_Surface_Ptr surf = load_image( path.c_str() );
+                entity_atlas_ = CreateTextureFromSurface( renderer, surf );
+            } catch( const std::exception & ) {
+                entity_atlas_.reset();
+            }
+            int w = 0;
+            int h = 0;
+            if( entity_atlas_ ) {
+#if SDL_MAJOR_VERSION >= 3
+                float fw = 0.0f;
+                float fh = 0.0f;
+                if( SDL_GetTextureSize( entity_atlas_.get(), &fw, &fh ) ) {
+                    w = static_cast<int>( fw );
+                    h = static_cast<int>( fh );
+                }
+#else
+                SDL_QueryTexture( entity_atlas_.get(), nullptr, nullptr, &w, &h );
+#endif
+            }
+            if( entity_atlas_ && w > 0 && h > 0 ) {
+                entity_atlas_w_ = static_cast<float>( w );
+                entity_atlas_h_ = static_cast<float>( h );
+            } else {
+                entity_atlas_.reset();
+                entity_atlas_failed_ = true;
+            }
+        }
+
+        // Resolve a built-in atlas cell to its texture and half-texel-inset
+        // UVs. Square cells, so aspect is 1.
+        bool entity_sprite( const art cell, SDL_Texture *&tex, render_3d::sprite_uv &uv,
+                            float &aspect ) {
+            ensure_entity_atlas();
+            if( !entity_atlas_ ) {
+                return false;
+            }
+            const int idx = static_cast<int>( cell );
+            const int col = idx % art_cols;
+            const int row = idx / art_cols;
+            const float cw = entity_atlas_w_ / art_cols;
+            const float ch = entity_atlas_h_ / art_rows;
+            const float half_u = 0.5f / entity_atlas_w_;
+            const float half_v = 0.5f / entity_atlas_h_;
+            tex = entity_atlas_.get();
+            uv.u0 = ( col * cw ) / entity_atlas_w_ + half_u;
+            uv.v0 = ( row * ch ) / entity_atlas_h_ + half_v;
+            uv.u1 = ( ( col + 1 ) * cw ) / entity_atlas_w_ - half_u;
+            uv.v1 = ( ( row + 1 ) * ch ) / entity_atlas_h_ - half_v;
+            aspect = ch / cw;
+            return true;
+        }
+
+        // Pick the sprite for an entity: prefer the built-in art when the
+        // tileset is ASCII-class, otherwise prefer the tileset's own sprite,
+        // falling back to the other source. used_builtin reports which won so
+        // callers can skip tileset overlays that would not match built-in art.
+        template<typename TilesetFn>
+        bool resolve_sprite( const art cell, const TilesetFn &tileset_try,
+                             SDL_Texture *&tex, render_3d::sprite_uv &uv, float &aspect,
+                             bool &used_builtin ) {
+            used_builtin = false;
+            if( use_builtin_art() ) {
+                if( entity_sprite( cell, tex, uv, aspect ) ) {
+                    used_builtin = true;
+                    return true;
+                }
+                return tileset_try( tex, uv, aspect );
+            }
+            if( tileset_try( tex, uv, aspect ) ) {
+                return true;
+            }
+            if( entity_sprite( cell, tex, uv, aspect ) ) {
+                used_builtin = true;
+                return true;
+            }
+            return false;
+        }
+
+        static art character_art( const Character &ch ) {
+            return ch.is_npc() ? art::npc : art::player;
+        }
+
+        // Map a monster to the closest built-in archetype by species (and
+        // size, so a huge zombie reads as a hulking brute).
+        static art monster_art( const monster &mon ) {
+            static const species_id ZOMBIE( "ZOMBIE" );
+            static const species_id HUMAN( "HUMAN" );
+            static const species_id ROBOT( "ROBOT" );
+            static const species_id ROBOT_FLYING( "ROBOT_FLYING" );
+            static const species_id CYBORG( "CYBORG" );
+            static const species_id SPIDER( "SPIDER" );
+            static const species_id INSECT( "INSECT" );
+            static const species_id INSECT_FLYING( "INSECT_FLYING" );
+            static const species_id CENTIPEDE( "CENTIPEDE" );
+            static const species_id WORM( "WORM" );
+            static const species_id BIRD( "BIRD" );
+            static const species_id FISH( "FISH" );
+            static const species_id MOLLUSK( "MOLLUSK" );
+            static const species_id AMPHIBIAN( "AMPHIBIAN" );
+            static const species_id REPTILE( "REPTILE" );
+            static const species_id MAMMAL( "MAMMAL" );
+            static const species_id SLIME( "SLIME" );
+            static const species_id FUNGUS( "FUNGUS" );
+            static const species_id PLANT( "PLANT" );
+            static const species_id LEECH_PLANT( "LEECH_PLANT" );
+            const mtype &t = *mon.type;
+            if( t.in_species( ZOMBIE ) ) {
+                return t.size >= creature_size::huge ? art::hulk : art::zombie;
+            }
+            if( t.in_species( ROBOT ) || t.in_species( ROBOT_FLYING ) || t.in_species( CYBORG ) ) {
+                return art::robot;
+            }
+            if( t.in_species( SPIDER ) ) {
+                return art::spider;
+            }
+            if( t.in_species( INSECT ) || t.in_species( INSECT_FLYING ) ||
+                t.in_species( CENTIPEDE ) || t.in_species( WORM ) ) {
+                return art::insect;
+            }
+            if( t.in_species( BIRD ) ) {
+                return art::bird;
+            }
+            if( t.in_species( FISH ) || t.in_species( MOLLUSK ) || t.in_species( AMPHIBIAN ) ) {
+                return art::fish;
+            }
+            if( t.in_species( REPTILE ) ) {
+                return art::reptile;
+            }
+            if( t.in_species( MAMMAL ) ) {
+                return art::mammal;
+            }
+            if( t.in_species( SLIME ) ) {
+                return art::slime;
+            }
+            if( t.in_species( FUNGUS ) ) {
+                return art::fungus;
+            }
+            if( t.in_species( PLANT ) || t.in_species( LEECH_PLANT ) ) {
+                return art::plant;
+            }
+            if( t.in_species( HUMAN ) ) {
+                return art::human;
+            }
+            return art::creature;
+        }
+
+        // Map an item to the closest built-in silhouette by category.
+        static art item_art( const item &it ) {
+            const std::string cat = it.get_category_shallow().get_id().str();
+            if( cat == "guns" ) {
+                return art::gun;
+            }
+            if( cat == "weapons" ) {
+                return art::melee;
+            }
+            if( cat == "ammo" || cat == "magazines" || cat == "tool_magazine" ) {
+                return art::ammo;
+            }
+            if( cat == "food" ) {
+                return art::food;
+            }
+            if( cat == "drugs" || cat == "chems" || cat == "mutagen" ) {
+                return art::chem;
+            }
+            if( cat == "clothing" || cat == "armor" || cat == "exosuit" ) {
+                return art::clothing;
+            }
+            if( cat == "tools" ) {
+                return art::tool;
+            }
+            if( cat == "books" || cat == "manuals" || cat == "ma_manuals" || cat == "maps" ) {
+                return art::book;
+            }
+            if( cat == "container" ) {
+                return art::container;
+            }
+            if( cat == "corpses" ) {
+                return art::corpse;
+            }
+            if( cat == "spare_parts" || cat == "veh_parts" ) {
+                return art::material;
+            }
+            if( cat == "bionics" || cat == "software" || cat == "e_files" ) {
+                return art::electronic;
+            }
+            if( cat == "seeds" ) {
+                return art::plant;
+            }
+            return art::generic;
+        }
+
         // Draw one frame's snapshot of the deferred overlay/animation state
         // in this backend's visual language: glows for area effects, markers
         // for points, billboards for sprites.  Positions carry real z, so
@@ -4993,6 +5241,13 @@ class block_3d_world_renderer : public world_renderer
         std::vector<render_3d::vtx> verts_;
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
+        // Built-in entity sprite atlas, loaded once (reloaded if the renderer
+        // is recreated by device-loss recovery).
+        SDL_Texture_Ptr entity_atlas_;
+        SDL_Renderer *entity_atlas_renderer_ = nullptr;
+        bool entity_atlas_failed_ = false;
+        float entity_atlas_w_ = 0.0f;
+        float entity_atlas_h_ = 0.0f;
         overlay_frame_snapshot overlay_scratch_;
         bool gpu_scene_try_ = false;
         float sun_shadow_x_ = 0.0f;
