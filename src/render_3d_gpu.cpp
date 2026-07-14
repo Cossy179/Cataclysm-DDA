@@ -280,22 +280,29 @@ bool scene_gpu_pass::ensure_device_objects()
         shadow_pipeline_ = SDL_CreateGPUGraphicsPipeline( device_, &info );
     }
 
-    // Samplers: nearest + clamp for pixel-art atlases and for the manual
-    // PCF taps on the shadow map.
+    // Samplers.
     if( shadow_pipeline_ ) {
         SDL_GPUSamplerCreateInfo sinfo{};
+        // Nearest + clamp for the manual PCF taps on the shadow map (the
+        // shader compares raw depths, so filtering must not blend them).
         sinfo.min_filter = SDL_GPU_FILTER_NEAREST;
         sinfo.mag_filter = SDL_GPU_FILTER_NEAREST;
         sinfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
         sinfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
         sinfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
         sinfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-        atlas_sampler_ = SDL_CreateGPUSampler( device_, &sinfo );
         shadow_sampler_ = SDL_CreateGPUSampler( device_, &sinfo );
-        // Bilinear + clamp for the bloom blur taps, so each tap averages a
-        // 2x2 emissive neighborhood.
+        // Bilinear + clamp for the tileset atlas: pixel-art sprites and
+        // textured tops scale up in the axonometric view, so nearest sampling
+        // left them blocky and edge-aliased. Linear smooths the scaling; the
+        // block_3d backend insets every atlas UV by half a texel
+        // (uv_from_src) so a linear tap never bleeds into a neighbouring
+        // sprite in the packed sheet.
         sinfo.min_filter = SDL_GPU_FILTER_LINEAR;
         sinfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+        atlas_sampler_ = SDL_CreateGPUSampler( device_, &sinfo );
+        // Bilinear + clamp for the bloom blur taps, so each tap averages a
+        // 2x2 emissive neighborhood.
         linear_sampler_ = SDL_CreateGPUSampler( device_, &sinfo );
     }
 

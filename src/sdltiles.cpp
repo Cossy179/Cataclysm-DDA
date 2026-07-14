@@ -3979,6 +3979,7 @@ class block_3d_world_renderer : public world_renderer
                                                         e.color );
                                 break;
                             case entry_kind::glow:
+                            case entry_kind::ground_shadow:
                                 render_3d::emit_glow( verts_, cam, e.dx, e.dy, e.dz, e.base_h,
                                                       e.top_h, e.color );
                                 break;
@@ -4038,7 +4039,8 @@ class block_3d_world_renderer : public world_renderer
             block,      // base_h..top_h extruded block
             billboard,  // creature/avatar diamond; base_h is the foot height
             marker,     // small item/trap diamond; base_h is the foot height
-            glow        // translucent light halo; base_h is the height, top_h the size
+            glow,       // translucent light halo; base_h is the height, top_h the size
+            ground_shadow // dark translucent contact-shadow decal on the ground
         };
 
         struct draw_entry {
@@ -4284,6 +4286,9 @@ class block_3d_world_renderer : public world_renderer
                             const float light = render_3d::light_factor( here.ambient_light_at( p ) );
                             ie.tint = render_3d::grade( render_3d::shade(
                                                             render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
+                            // A small contact shadow grounds the item sprite;
+                            // the marker fallback is already flush to the floor.
+                            push_ground_shadow( dx, dy, dz, top_h, 0.42f, 80, push );
                         } else {
                             ie.kind = entry_kind::marker;
                         }
@@ -4478,6 +4483,18 @@ class block_3d_world_renderer : public world_renderer
             }
         }
 
+        // A soft dark contact-shadow decal on the ground under a billboard,
+        // so characters, monsters and items read as standing in the world
+        // instead of floating — especially indoors/underground, where the sun
+        // shadow map casts nothing. Pushed before the billboard so it blends
+        // beneath it; sits a hair above the floor top to avoid z-fighting.
+        template<typename PushFn>
+        void push_ground_shadow( const int dx, const int dy, const int dz, const float foot_h,
+                                 const float size, const uint8_t alpha, const PushFn &push ) {
+            push( draw_entry{ dx, dy, dz, foot_h + 0.02f, size,
+                              render_3d::rgba{ 0, 0, 0, alpha }, entry_kind::ground_shadow } );
+        }
+
         // Draw a character (avatar or NPC) as its real tileset sprite plus
         // the worn-item / mutation overlays the 2D renderer stacks
         // (cata_tiles::draw_entity_with_overlays): a base billboard then one
@@ -4507,6 +4524,7 @@ class block_3d_world_renderer : public world_renderer
             if( have_sprite ) {
                 base.tint = lit_white;
             }
+            push_ground_shadow( dx, dy, dz, foot_h, 0.72f, 115, push );
             push( base );
             // Overlays only make sense once the base is a real sprite.
             if( have_sprite && tilecontext ) {
@@ -4548,6 +4566,7 @@ class block_3d_world_renderer : public world_renderer
                                  render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 }, light ), env_ );
                 }
             }
+            push_ground_shadow( dx, dy, dz, foot_h, 0.72f, 115, push );
             push( e );
         }
 
@@ -4643,6 +4662,12 @@ class block_3d_world_renderer : public world_renderer
                                                   e.base_h, e.top_h, e.color );
                             // Glows are light halos: always feed the bloom mask.
                             pack( 0.0f, 1.0f );
+                            break;
+                        case entry_kind::ground_shadow:
+                            render_3d::emit_glow( gpu_scratch_, cam, e.dx, e.dy, e.dz,
+                                                  e.base_h, e.top_h, e.color );
+                            // A dark contact decal: never lit, never bloomed.
+                            pack( 0.0f, 0.0f );
                             break;
                         case entry_kind::block:
                         default: {
@@ -4855,10 +4880,15 @@ class block_3d_world_renderer : public world_renderer
                 it = sheet_dims_.emplace( tex, std::make_pair( static_cast<float>( w ),
                                           static_cast<float>( h ) ) ).first;
             }
-            uv.u0 = static_cast<float>( src.x ) / it->second.first;
-            uv.v0 = static_cast<float>( src.y ) / it->second.second;
-            uv.u1 = static_cast<float>( src.x + src.w ) / it->second.first;
-            uv.v1 = static_cast<float>( src.y + src.h ) / it->second.second;
+            // Inset by half a texel so the atlas sampler's linear taps stay
+            // inside this sprite's cell and never bleed the neighbouring
+            // sprite packed beside it in the sheet.
+            const float half_u = 0.5f / it->second.first;
+            const float half_v = 0.5f / it->second.second;
+            uv.u0 = static_cast<float>( src.x ) / it->second.first + half_u;
+            uv.v0 = static_cast<float>( src.y ) / it->second.second + half_v;
+            uv.u1 = static_cast<float>( src.x + src.w ) / it->second.first - half_u;
+            uv.v1 = static_cast<float>( src.y + src.h ) / it->second.second - half_v;
             aspect = static_cast<float>( src.h ) / static_cast<float>( src.w );
             return true;
         }
