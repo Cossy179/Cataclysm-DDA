@@ -330,6 +330,44 @@ void emit_block_sides( std::vector<vtx> &out, const camera &cam, const int dx, c
                dt + 2.0f, dt + 1.0f, db + 1.0f, db + 2.0f );
 }
 
+void emit_block_sides_textured( std::vector<vtx> &out, const camera &cam, const int dx,
+                                const int dy, const int dz, const float base_h,
+                                const float top_h, const rgba &tint, const float south,
+                                const float east, const sprite_uv &uv )
+{
+    if( top_h <= base_h ) {
+        return;
+    }
+    const float fdx = static_cast<float>( dx );
+    const float fdy = static_cast<float>( dy );
+    const float fdz = static_cast<float>( dz );
+    const float dt = fdx + fdy + fdz + top_h;
+    const float db = fdx + fdy + fdz + base_h;
+    const fpoint te = project( cam, fdx + 1.0f, fdy, fdz + top_h );
+    const fpoint ts = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + top_h );
+    const fpoint tw = project( cam, fdx, fdy + 1.0f, fdz + top_h );
+    const fpoint bw = project( cam, fdx, fdy + 1.0f, fdz + base_h );
+    const fpoint bs = project( cam, fdx + 1.0f, fdy + 1.0f, fdz + base_h );
+    const fpoint be = project( cam, fdx + 1.0f, fdy, fdz + base_h );
+    const rgba cs = shade( tint, south );
+    const rgba ce = shade( tint, east );
+    // South (+y) face: west-top, south-top, south-bottom, west-bottom —
+    // same corner order and depth keys as emit_block_sides.
+    out.push_back( vtx{ tw.x, tw.y, cs, uv.u0, uv.v0, dt + 1.0f } );
+    out.push_back( vtx{ ts.x, ts.y, cs, uv.u1, uv.v0, dt + 2.0f } );
+    out.push_back( vtx{ bs.x, bs.y, cs, uv.u1, uv.v1, db + 2.0f } );
+    out.push_back( vtx{ tw.x, tw.y, cs, uv.u0, uv.v0, dt + 1.0f } );
+    out.push_back( vtx{ bs.x, bs.y, cs, uv.u1, uv.v1, db + 2.0f } );
+    out.push_back( vtx{ bw.x, bw.y, cs, uv.u0, uv.v1, db + 1.0f } );
+    // East (+x) face: south-top, east-top, east-bottom, south-bottom.
+    out.push_back( vtx{ ts.x, ts.y, ce, uv.u0, uv.v0, dt + 2.0f } );
+    out.push_back( vtx{ te.x, te.y, ce, uv.u1, uv.v0, dt + 1.0f } );
+    out.push_back( vtx{ be.x, be.y, ce, uv.u1, uv.v1, db + 1.0f } );
+    out.push_back( vtx{ ts.x, ts.y, ce, uv.u0, uv.v0, dt + 2.0f } );
+    out.push_back( vtx{ be.x, be.y, ce, uv.u1, uv.v1, db + 1.0f } );
+    out.push_back( vtx{ bs.x, bs.y, ce, uv.u0, uv.v1, db + 2.0f } );
+}
+
 void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, const int dx,
                               const int dy, const int dz, const float top_h, const rgba &tint,
                               const std::array<float, 4> &ao, const sprite_uv &uv )

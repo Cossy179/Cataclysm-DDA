@@ -64,6 +64,7 @@
 #include "input_context.h"
 #include "json.h"
 #include "line.h"
+#include "block3d_atlas.h"
 #include "loading_ui.h"
 #include "field.h"
 #include "item.h"
@@ -3992,7 +3993,7 @@ class block_3d_world_renderer : public world_renderer
                                     const render_3d::block_shading shading{ e.ao, fs, fe };
                                     render_3d::emit_block_shaded( verts_, cam, e.dx, e.dy, e.dz,
                                                                   e.base_h, e.top_h, e.color, shading );
-                                } else {
+                                } else if( !e.side_textured ) {
                                     render_3d::emit_block_sides( verts_, cam, e.dx, e.dy, e.dz,
                                                                  e.base_h, e.top_h, e.color, fs, fe );
                                 }
@@ -4008,6 +4009,13 @@ class block_3d_world_renderer : public world_renderer
                         if( e.kind == entry_kind::block ) {
                             render_3d::emit_block_top_textured( verts_, cam, e.dx, e.dy, e.dz,
                                                                 e.top_h, e.tint, e.ao, e.uv );
+                            if( e.side_textured ) {
+                                const float fs = e.face_south >= 0.0f ? e.face_south : env_.face_south;
+                                const float fe = e.face_east >= 0.0f ? e.face_east : env_.face_east;
+                                render_3d::emit_block_sides_textured( verts_, cam, e.dx, e.dy,
+                                                                      e.dz, e.base_h, e.top_h,
+                                                                      e.tint, fs, fe, e.side_uv );
+                            }
                         } else if( e.kind == entry_kind::billboard ) {
                             render_3d::emit_sprite_billboard( verts_, cam, e.dx, e.dy, e.dz,
                                                               e.base_h, e.aspect, e.tint, e.uv );
@@ -4058,6 +4066,18 @@ class block_3d_world_renderer : public world_renderer
         static constexpr int art_cols = 8;
         static constexpr int art_rows = 4;
 
+        // Cell indices into the built-in terrain texture atlas, mirroring
+        // TERRAIN_LAYOUT in tools/gfx/gen_block3d_sprites.py. Tileable 32px
+        // textures for block top and side faces.
+        enum class ter_tex : int {
+            grass = 0, tall_grass, dirt, sand, gravel, pavement, sidewalk, concrete,
+            floor_wood, wall_brick, wall_concrete, roof, water, deep_water, rock, mud,
+            tree, shrub, underbrush, door, window, dirt_side, wood_side, metal,
+            none = -1
+        };
+        static constexpr int ter_tex_cols = 8;
+        static constexpr int ter_tex_rows = 3;
+
         struct draw_entry {
             int dx = 0;
             int dy = 0;
@@ -4077,6 +4097,10 @@ class block_3d_world_renderer : public world_renderer
             render_3d::sprite_uv uv{};
             render_3d::rgba tint{};
             float aspect = 1.0f;
+            // Blocks only: texture the two visible side faces with side_uv
+            // (from the same atlas as tex) instead of flat color.
+            render_3d::sprite_uv side_uv{};
+            bool side_textured = false;
             // Billboard entries only: cast a sun shadow (creatures, avatar).
             bool caster = false;
             // Light-emitting geometry (fire): feed the bloom mask.
@@ -4182,7 +4206,15 @@ class block_3d_world_renderer : public world_renderer
                        : base;
             };
             const auto attach_sprite = [&]( draw_entry & e, const std::string & id ) {
-                if( sprite_for( id, e.tex, e.uv, e.aspect ) ) {
+                // ASCII-class tilesets have no usable terrain art; texture
+                // tops and sides from the built-in terrain atlas instead.
+                if( use_builtin_art() ) {
+                    if( attach_terrain_art( e, id ) || sprite_for( id, e.tex, e.uv, e.aspect ) ) {
+                        e.tint = sprite_tint();
+                    }
+                    return;
+                }
+                if( sprite_for( id, e.tex, e.uv, e.aspect ) || attach_terrain_art( e, id ) ) {
                     e.tint = sprite_tint();
                 }
             };
@@ -4299,7 +4331,7 @@ class block_3d_world_renderer : public world_renderer
                         bool used_builtin = false;
                         const std::string item_id = top_item.typeId().str();
                         if( resolve_sprite( item_art( top_item ),
-                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                        [&]( SDL_Texture *&t, render_3d::sprite_uv & u, float & a ) {
                         return sprite_for( item_id, TILE_CATEGORY::ITEM, t, u, a );
                         },
                         ie.tex, ie.uv, ie.aspect, used_builtin ) ) {
@@ -4429,7 +4461,12 @@ class block_3d_world_renderer : public world_renderer
                 return render_3d::memory_tint( to_rgba( curses_color_to_SDL( c ) ) );
             };
             const auto attach_mem_sprite = [&]( draw_entry & e, const std::string & id ) {
-                if( sprite_for( id, e.tex, e.uv, e.aspect ) ) {
+                const bool textured = use_builtin_art()
+                                      ? attach_terrain_art( e, id ) ||
+                                      sprite_for( id, e.tex, e.uv, e.aspect )
+                                      : sprite_for( id, e.tex, e.uv, e.aspect ) ||
+                                      attach_terrain_art( e, id );
+                if( textured ) {
                     e.tint = render_3d::memory_tint( render_3d::rgba{ 255, 255, 255, 255 } );
                 }
             };
@@ -4543,7 +4580,7 @@ class block_3d_world_renderer : public world_renderer
             bool used_builtin = false;
             const bool have_sprite = resolve_sprite(
                                          character_art( ch ),
-            [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+            [&]( SDL_Texture *&t, render_3d::sprite_uv & u, float & a ) {
                 return sprite_for( base_id, t, u, a );
             },
             base.tex, base.uv, base.aspect, used_builtin );
@@ -4591,7 +4628,7 @@ class block_3d_world_renderer : public world_renderer
                 bool used_builtin = false;
                 const std::string mon_id = mon->type->id.str();
                 if( resolve_sprite( monster_art( *mon ),
-                [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                [&]( SDL_Texture *&t, render_3d::sprite_uv & u, float & a ) {
                 return sprite_for( mon_id, t, u, a );
                 },
                 e.tex, e.uv, e.aspect, used_builtin ) ) {
@@ -4710,7 +4747,7 @@ class block_3d_world_renderer : public world_renderer
                                 const render_3d::block_shading shading{ e.ao, fs, fe };
                                 render_3d::emit_block_shaded( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                               e.base_h, e.top_h, e.color, shading );
-                            } else {
+                            } else if( !e.side_textured ) {
                                 render_3d::emit_block_sides( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                              e.base_h, e.top_h, e.color, fs, fe );
                             }
@@ -4734,6 +4771,13 @@ class block_3d_world_renderer : public world_renderer
                     if( e.kind == entry_kind::block ) {
                         render_3d::emit_block_top_textured( gpu_scratch_, cam, e.dx, e.dy, e.dz,
                                                             e.top_h, e.tint, e.ao, e.uv );
+                        if( e.side_textured ) {
+                            const float fs = e.face_south >= 0.0f ? e.face_south : env_.face_south;
+                            const float fe = e.face_east >= 0.0f ? e.face_east : env_.face_east;
+                            render_3d::emit_block_sides_textured( gpu_scratch_, cam, e.dx, e.dy,
+                                                                  e.dz, e.base_h, e.top_h,
+                                                                  e.tint, fs, fe, e.side_uv );
+                        }
                         pack( 1.0f, emit );
                     } else if( e.kind == entry_kind::billboard ) {
                         render_3d::emit_sprite_billboard( gpu_scratch_, cam, e.dx, e.dy, e.dz,
@@ -4933,14 +4977,39 @@ class block_3d_world_renderer : public world_renderer
             return !tilecontext || tilecontext->get_tile_width() < 24;
         }
 
-        // Load the built-in entity atlas once; reload if the renderer was
-        // recreated (device-loss recovery) so the texture never dangles.
+        static bool texture_dims( SDL_Texture *const tex, float &w, float &h ) {
+            if( !tex ) {
+                return false;
+            }
+#if SDL_MAJOR_VERSION >= 3
+            float fw = 0.0f;
+            float fh = 0.0f;
+            if( !SDL_GetTextureSize( tex, &fw, &fh ) ) {
+                return false;
+            }
+            w = fw;
+            h = fh;
+#else
+            int iw = 0;
+            int ih = 0;
+            if( SDL_QueryTexture( tex, nullptr, nullptr, &iw, &ih ) != 0 ) {
+                return false;
+            }
+            w = static_cast<float>( iw );
+            h = static_cast<float>( ih );
+#endif
+            return w > 0.0f && h > 0.0f;
+        }
+
+        // Decode the embedded atlases once; reload if the renderer was
+        // recreated (device-loss recovery) so the textures never dangle.
         void ensure_entity_atlas() {
             SDL_Renderer *const cur = renderer ? renderer.get() : nullptr;
             if( entity_atlas_renderer_ == cur && ( entity_atlas_ || entity_atlas_failed_ ) ) {
                 return;
             }
             entity_atlas_.reset();
+            terrain_atlas_.reset();
             entity_atlas_failed_ = false;
             entity_atlas_renderer_ = cur;
             if( !renderer ) {
@@ -4948,32 +5017,20 @@ class block_3d_world_renderer : public world_renderer
                 return;
             }
             try {
-                const std::string path =
-                    ( PATH_INFO::gfxdir() / "Block3D" / "entities.png" ).generic_u8string();
-                SDL_Surface_Ptr surf = load_image( path.c_str() );
-                entity_atlas_ = CreateTextureFromSurface( renderer, surf );
-            } catch( const std::exception & ) {
-                entity_atlas_.reset();
+                SDL_Surface_Ptr es = load_image_mem( block3d_entities_png,
+                                                     block3d_entities_png_len );
+                entity_atlas_ = CreateTextureFromSurface( renderer, es );
+                SDL_Surface_Ptr ts = load_image_mem( block3d_terrain_png,
+                                                     block3d_terrain_png_len );
+                terrain_atlas_ = CreateTextureFromSurface( renderer, ts );
+            } catch( const std::exception &err ) {
+                DebugLog( D_ERROR, DC_ALL )
+                        << "block_3d: embedded atlas decode failed: " << err.what();
             }
-            int w = 0;
-            int h = 0;
-            if( entity_atlas_ ) {
-#if SDL_MAJOR_VERSION >= 3
-                float fw = 0.0f;
-                float fh = 0.0f;
-                if( SDL_GetTextureSize( entity_atlas_.get(), &fw, &fh ) ) {
-                    w = static_cast<int>( fw );
-                    h = static_cast<int>( fh );
-                }
-#else
-                SDL_QueryTexture( entity_atlas_.get(), nullptr, nullptr, &w, &h );
-#endif
-            }
-            if( entity_atlas_ && w > 0 && h > 0 ) {
-                entity_atlas_w_ = static_cast<float>( w );
-                entity_atlas_h_ = static_cast<float>( h );
-            } else {
+            if( !texture_dims( entity_atlas_.get(), entity_atlas_w_, entity_atlas_h_ ) ||
+                !texture_dims( terrain_atlas_.get(), terrain_atlas_w_, terrain_atlas_h_ ) ) {
                 entity_atlas_.reset();
+                terrain_atlas_.reset();
                 entity_atlas_failed_ = true;
             }
         }
@@ -4999,6 +5056,106 @@ class block_3d_world_renderer : public world_renderer
             uv.u1 = ( ( col + 1 ) * cw ) / entity_atlas_w_ - half_u;
             uv.v1 = ( ( row + 1 ) * ch ) / entity_atlas_h_ - half_v;
             aspect = ch / cw;
+            return true;
+        }
+
+        // Half-texel-inset UVs for a terrain texture cell.
+        void terrain_uv( const ter_tex cell, render_3d::sprite_uv &uv ) const {
+            const int idx = static_cast<int>( cell );
+            const int col = idx % ter_tex_cols;
+            const int row = idx / ter_tex_cols;
+            const float cw = terrain_atlas_w_ / ter_tex_cols;
+            const float ch = terrain_atlas_h_ / ter_tex_rows;
+            const float half_u = 0.5f / terrain_atlas_w_;
+            const float half_v = 0.5f / terrain_atlas_h_;
+            uv.u0 = ( col * cw ) / terrain_atlas_w_ + half_u;
+            uv.v0 = ( row * ch ) / terrain_atlas_h_ + half_v;
+            uv.u1 = ( ( col + 1 ) * cw ) / terrain_atlas_w_ - half_u;
+            uv.v1 = ( ( row + 1 ) * ch ) / terrain_atlas_h_ - half_v;
+        }
+
+        // Classify a terrain/furniture id string to (top, side) texture
+        // cells by keyword, most specific first. Cached per id.
+        std::pair<ter_tex, ter_tex> terrain_cells( const std::string &id ) {
+            const auto hit = ter_tex_cache_.find( id );
+            if( hit != ter_tex_cache_.end() ) {
+                return hit->second;
+            }
+            const auto has = [&id]( const char *const kw ) {
+                return id.find( kw ) != std::string::npos;
+            };
+            std::pair<ter_tex, ter_tex> r{ ter_tex::none, ter_tex::none };
+            if( has( "window" ) ) {
+                r = { ter_tex::wall_concrete, ter_tex::window };
+            } else if( has( "door" ) ) {
+                r = { ter_tex::floor_wood, ter_tex::door };
+            } else if( has( "brick" ) ) {
+                r = { ter_tex::concrete, ter_tex::wall_brick };
+            } else if( has( "wall" ) ) {
+                r = { ter_tex::wall_concrete, ter_tex::wall_concrete };
+            } else if( has( "palisade" ) || has( "log" ) || has( "stump" ) || has( "fence" ) ) {
+                r = { ter_tex::wood_side, ter_tex::wood_side };
+            } else if( has( "tree" ) ) {
+                r = { ter_tex::tree, ter_tex::wood_side };
+            } else if( has( "shrub" ) || has( "bush" ) ) {
+                r = { ter_tex::shrub, ter_tex::shrub };
+            } else if( has( "underbrush" ) ) {
+                r = { ter_tex::underbrush, ter_tex::underbrush };
+            } else if( has( "grass_long" ) || has( "grass_tall" ) || has( "grass_dead" ) ) {
+                r = { ter_tex::tall_grass, ter_tex::dirt_side };
+            } else if( has( "grass" ) ) {
+                r = { ter_tex::grass, ter_tex::dirt_side };
+            } else if( has( "dirt" ) ) {
+                r = { ter_tex::dirt, ter_tex::dirt_side };
+            } else if( has( "sand" ) ) {
+                r = { ter_tex::sand, ter_tex::dirt_side };
+            } else if( has( "gravel" ) ) {
+                r = { ter_tex::gravel, ter_tex::dirt_side };
+            } else if( has( "pavement" ) || has( "asphalt" ) ) {
+                r = { ter_tex::pavement, ter_tex::dirt_side };
+            } else if( has( "sidewalk" ) ) {
+                r = { ter_tex::sidewalk, ter_tex::dirt_side };
+            } else if( has( "concrete" ) || has( "cement" ) ) {
+                r = { ter_tex::concrete, ter_tex::wall_concrete };
+            } else if( has( "water_dp" ) || has( "water_pool" ) || has( "lake" ) ) {
+                r = { ter_tex::deep_water, ter_tex::deep_water };
+            } else if( has( "water" ) ) {
+                r = { ter_tex::water, ter_tex::water };
+            } else if( has( "swamp" ) || has( "mud" ) ) {
+                r = { ter_tex::mud, ter_tex::dirt_side };
+            } else if( has( "rock" ) || has( "stone" ) ) {
+                r = { ter_tex::rock, ter_tex::rock };
+            } else if( has( "roof" ) ) {
+                r = { ter_tex::roof, ter_tex::wall_concrete };
+            } else if( has( "metal" ) || has( "steel" ) ) {
+                r = { ter_tex::metal, ter_tex::metal };
+            } else if( has( "floor" ) || has( "linoleum" ) || has( "carpet" ) ) {
+                r = { ter_tex::floor_wood, ter_tex::wood_side };
+            } else if( has( "wood" ) || has( "counter" ) || has( "table" ) || has( "desk" ) ||
+                       has( "cabinet" ) || has( "bookcase" ) || has( "bench" ) || has( "chair" ) ||
+                       has( "crate" ) ) {
+                r = { ter_tex::wood_side, ter_tex::wood_side };
+            }
+            ter_tex_cache_.emplace( id, r );
+            return r;
+        }
+
+        // Texture a block entry's top and side faces from the built-in
+        // terrain atlas; false leaves the flat-color fallback.
+        bool attach_terrain_art( draw_entry &e, const std::string &id ) {
+            const std::pair<ter_tex, ter_tex> cells = terrain_cells( id );
+            if( cells.first == ter_tex::none ) {
+                return false;
+            }
+            ensure_entity_atlas();
+            if( !terrain_atlas_ ) {
+                return false;
+            }
+            e.tex = terrain_atlas_.get();
+            terrain_uv( cells.first, e.uv );
+            terrain_uv( cells.second, e.side_uv );
+            e.side_textured = true;
+            e.aspect = 1.0f;
             return true;
         }
 
@@ -5241,13 +5398,19 @@ class block_3d_world_renderer : public world_renderer
         std::vector<render_3d::vtx> verts_;
         std::vector<tex_run> runs_;
         std::map<SDL_Texture *, std::pair<float, float>> sheet_dims_;
-        // Built-in entity sprite atlas, loaded once (reloaded if the renderer
-        // is recreated by device-loss recovery).
+        // Built-in entity + terrain atlases decoded from PNGs embedded in the
+        // binary (src/block3d_atlas.cpp), loaded once and reloaded if the
+        // renderer is recreated by device-loss recovery.
         SDL_Texture_Ptr entity_atlas_;
+        SDL_Texture_Ptr terrain_atlas_;
         SDL_Renderer *entity_atlas_renderer_ = nullptr;
         bool entity_atlas_failed_ = false;
         float entity_atlas_w_ = 0.0f;
         float entity_atlas_h_ = 0.0f;
+        float terrain_atlas_w_ = 0.0f;
+        float terrain_atlas_h_ = 0.0f;
+        // Terrain/furniture id -> (top, side) texture cells; none = color.
+        std::map<std::string, std::pair<ter_tex, ter_tex>> ter_tex_cache_;
         overlay_frame_snapshot overlay_scratch_;
         bool gpu_scene_try_ = false;
         float sun_shadow_x_ = 0.0f;

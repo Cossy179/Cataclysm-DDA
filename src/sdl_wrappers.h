@@ -129,6 +129,9 @@ bool SetTextureColorMod( const std::shared_ptr<SDL_Texture> &texture, Uint32 r, 
 void SetRenderDrawBlendMode( const SDL_Renderer_Ptr &renderer, SDL_BlendMode blendMode );
 void GetRenderDrawBlendMode( const SDL_Renderer_Ptr &renderer, SDL_BlendMode &blend_mode );
 SDL_Surface_Ptr load_image( const char *path );
+// Decode an image from an in-memory buffer (e.g. an embedded PNG); throws on
+// failure like load_image.
+SDL_Surface_Ptr load_image_mem( const unsigned char *data, size_t len );
 
 // Deferred-disposal list for GPU texture handles that must outlive an
 // interrupted or pre-rebuild operation. Each handle's deleter consults a shared

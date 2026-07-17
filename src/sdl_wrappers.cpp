@@ -375,6 +375,26 @@ SDL_Surface_Ptr load_image( const char *const path )
     return result;
 }
 
+SDL_Surface_Ptr load_image_mem( const unsigned char *const data, const size_t len )
+{
+    cata_assert( data );
+#if SDL_MAJOR_VERSION >= 3
+    SDL_Surface_Ptr result( IMG_Load_IO( SDL_IOFromConstMem( data, len ), true ) );
+    if( !result ) {
+        throw std::runtime_error( std::string( "Could not decode embedded image: " ) +
+                                  SDL_GetError() );
+    }
+#else
+    SDL_Surface_Ptr result( IMG_Load_RW( SDL_RWFromConstMem( data, static_cast<int>( len ) ),
+                                         1 ) );
+    if( !result ) {
+        throw std::runtime_error( std::string( "Could not decode embedded image: " ) +
+                                  IMG_GetError() );
+    }
+#endif
+    return result;
+}
+
 void scoped_render_target::mark_boundary_lost()
 {
     renderer_boundary_signal_recovery_required();

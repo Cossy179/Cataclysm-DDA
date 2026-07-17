@@ -265,6 +265,16 @@ void emit_block_top_textured( std::vector<vtx> &out, const camera &cam, int dx, 
                               const sprite_uv &uv );
 
 /**
+ * The two visible side faces of a block carrying a texture (walls, dirt
+ * cross-sections), tinted by `tint` modulated by the per-face light factors
+ * `south`/`east`.  The texture's v range maps top-of-face to bottom-of-face.
+ * Emit into a batch drawn with the texture's atlas.
+ */
+void emit_block_sides_textured( std::vector<vtx> &out, const camera &cam, int dx, int dy, int dz,
+                                float base_h, float top_h, const rgba &tint,
+                                float south, float east, const sprite_uv &uv );
+
+/**
  * A camera-facing upright sprite standing on cell (dx, dy, dz) at height
  * foot_h — creatures with their real tileset sprites.  aspect is the
  * sprite's height/width ratio; the quad is 0.75 tile widths wide.

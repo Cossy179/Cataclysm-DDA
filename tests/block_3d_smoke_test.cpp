@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "avatar.h"
+#include "block3d_atlas.h"
 #include "cata_catch.h"
 #include "cata_tiles.h"
 #include "coordinates.h"
@@ -15,7 +16,6 @@
 #include "map_helpers_tests.h"
 #include "npc.h"
 #include "options_helpers.h"
-#include "path_info.h"
 #include "player_helpers.h"
 #include "point.h"
 #include "sdl_geometry.h"
@@ -106,20 +106,27 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
     wr.draw_world( scene, overlay_strings, color_blocks );
 }
 
-// The built-in entity sprite atlas the block_3d backend billboards in place
-// of diamonds when the tileset is ASCII-class must actually ship and load at
-// the runtime gfx path — otherwise the 3D view silently falls back to
-// diamonds again.
+// The built-in entity + terrain atlases the block_3d backend uses in place
+// of diamonds/flat colors are embedded in the binary; they must decode with
+// the cell-grid dimensions the renderer's UV math assumes — otherwise the 3D
+// view silently falls back to placeholder primitives again.
 TEST_CASE( "block_3d_entity_atlas_present", "[tiles][render_3d]" )
 {
-    const std::string path =
-        ( PATH_INFO::gfxdir() / "Block3D" / "entities.png" ).generic_u8string();
-    SDL_Surface_Ptr surf;
-    REQUIRE_NOTHROW( surf = load_image( path.c_str() ) );
-    REQUIRE( surf );
+    SDL_Surface_Ptr entities;
+    REQUIRE_NOTHROW( entities = load_image_mem( block3d_entities_png,
+                                block3d_entities_png_len ) );
+    REQUIRE( entities );
     // 8x4 grid of 64px cells (tools/gfx/gen_block3d_sprites.py).
-    CHECK( surf->w == 512 );
-    CHECK( surf->h == 256 );
+    CHECK( entities->w == 512 );
+    CHECK( entities->h == 256 );
+
+    SDL_Surface_Ptr terrain;
+    REQUIRE_NOTHROW( terrain = load_image_mem( block3d_terrain_png,
+                               block3d_terrain_png_len ) );
+    REQUIRE( terrain );
+    // 8x3 grid of 32px cells.
+    CHECK( terrain->w == 256 );
+    CHECK( terrain->h == 96 );
 }
 
 // The character- and item-sprite paths: the avatar (with worn gear) and a

@@ -449,21 +449,328 @@ DRAW = {
 }
 
 
-def main():
-    import os
+# ---- terrain textures ------------------------------------------------------
+# Tileable 32px textures for block top and side faces. No outlines — they
+# tile across the world. Order mirrors terrain_cell in src/sdltiles.cpp.
+import random
+
+TER_CELL = 32
+TER_COLS = 8
+TER_ROWS = 3
+TERRAIN_LAYOUT = [
+    "grass", "tall_grass", "dirt", "sand", "gravel", "pavement", "sidewalk",
+    "concrete",
+    "floor_wood", "wall_brick", "wall_concrete", "roof", "water", "deep_water",
+    "rock", "mud",
+    "tree", "shrub", "underbrush", "door", "window", "dirt_side", "wood_side",
+    "metal",
+]
+
+
+def speckle(d, rng, base, specks, n=170):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=base)
+    for _ in range(n):
+        d.point((rng.randrange(TER_CELL), rng.randrange(TER_CELL)),
+                fill=rng.choice(specks))
+
+
+def t_grass(d, rng):
+    speckle(d, rng, (74, 111, 57, 255),
+            [(88, 128, 66, 255), (62, 96, 48, 255), (99, 140, 74, 255),
+             (55, 86, 44, 255)])
+    for _ in range(14):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x, max(0, y - 2)), fill=(104, 148, 80, 255))
+
+
+def t_tall_grass(d, rng):
+    speckle(d, rng, (86, 118, 56, 255),
+            [(104, 140, 66, 255), (70, 100, 48, 255), (120, 152, 78, 255)])
+    for _ in range(22):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(6, TER_CELL)
+        d.line((x, y, x + rng.choice((-1, 0, 1)), y - rng.randrange(3, 6)),
+               fill=(126, 160, 84, 255))
+
+
+def t_dirt(d, rng):
+    speckle(d, rng, (121, 96, 68, 255),
+            [(138, 111, 80, 255), (104, 82, 58, 255), (146, 120, 90, 255),
+             (92, 72, 52, 255)])
+
+
+def t_sand(d, rng):
+    speckle(d, rng, (204, 178, 128, 255),
+            [(216, 192, 142, 255), (188, 162, 114, 255), (224, 202, 156, 255)])
+
+
+def t_gravel(d, rng):
+    speckle(d, rng, (136, 132, 126, 255),
+            [(158, 154, 148, 255), (112, 108, 104, 255), (170, 168, 162, 255),
+             (96, 94, 90, 255)], n=220)
+
+
+def t_pavement(d, rng):
+    speckle(d, rng, (72, 72, 76, 255),
+            [(80, 80, 84, 255), (64, 64, 68, 255), (88, 88, 92, 255)], n=120)
+    # cracks
+    for _ in range(2):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        for _ in range(8):
+            nx = x + rng.choice((-1, 0, 1, 1))
+            ny = y + rng.choice((-1, 0, 1))
+            d.line((x, y, nx, ny), fill=(52, 52, 56, 255))
+            x, y = nx % TER_CELL, ny % TER_CELL
+
+
+def t_sidewalk(d, rng):
+    speckle(d, rng, (156, 154, 148, 255),
+            [(168, 166, 160, 255), (144, 142, 136, 255)], n=110)
+    d.line((0, 15, 31, 15), fill=(120, 118, 112, 255))
+    d.line((15, 0, 15, 31), fill=(120, 118, 112, 255))
+
+
+def t_concrete(d, rng):
+    speckle(d, rng, (128, 128, 130, 255),
+            [(140, 140, 142, 255), (116, 116, 118, 255)], n=130)
+
+
+def t_floor_wood(d, rng):
+    base = (150, 111, 74, 255)
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=base)
+    for px in range(0, TER_CELL, 8):
+        d.line((px, 0, px, TER_CELL - 1), fill=(112, 80, 52, 255))
+        for _ in range(10):
+            x = px + 1 + rng.randrange(7)
+            y = rng.randrange(TER_CELL)
+            d.line((x, y, x, y + rng.randrange(2, 5)), fill=(136, 99, 64, 255))
+
+
+def t_wall_brick(d, rng):
+    mortar = (168, 158, 148, 255)
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=mortar)
+    bh = 6
+    bw = 12
+    for row, y in enumerate(range(0, TER_CELL, bh)):
+        off = (bw // 2) if row % 2 else 0
+        for x in range(-bw, TER_CELL + bw, bw):
+            c = rng.choice([(148, 74, 58, 255), (158, 82, 62, 255),
+                            (140, 68, 54, 255)])
+            d.rectangle((x + off + 1, y + 1, x + off + bw - 1, y + bh - 1),
+                        fill=c)
+
+
+def t_wall_concrete(d, rng):
+    speckle(d, rng, (140, 138, 136, 255),
+            [(150, 148, 146, 255), (128, 126, 124, 255)], n=110)
+    d.line((0, 10, 31, 10), fill=(116, 114, 112, 255))
+    d.line((0, 21, 31, 21), fill=(116, 114, 112, 255))
+
+
+def t_roof(d, rng):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=(94, 88, 96, 255))
+    for row, y in enumerate(range(0, TER_CELL, 6)):
+        c = (106, 100, 108, 255) if row % 2 else (84, 78, 86, 255)
+        d.rectangle((0, y, TER_CELL - 1, y + 4), fill=c)
+        d.line((0, y + 5, TER_CELL - 1, y + 5), fill=(64, 60, 66, 255))
+
+
+def t_water(d, rng):
+    speckle(d, rng, (52, 106, 158, 255),
+            [(60, 118, 172, 255), (46, 96, 146, 255)], n=80)
+    for _ in range(7):
+        x = rng.randrange(TER_CELL - 8)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x + rng.randrange(4, 9), y), fill=(96, 152, 200, 255))
+
+
+def t_deep_water(d, rng):
+    speckle(d, rng, (34, 74, 122, 255),
+            [(40, 84, 134, 255), (28, 64, 110, 255)], n=70)
+    for _ in range(5):
+        x = rng.randrange(TER_CELL - 8)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x + rng.randrange(4, 8), y), fill=(64, 110, 160, 255))
+
+
+def t_rock(d, rng):
+    speckle(d, rng, (118, 116, 118, 255),
+            [(132, 130, 132, 255), (104, 102, 104, 255)], n=120)
+    for _ in range(6):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        r = rng.randrange(3, 7)
+        d.ellipse((x - r, y - r // 2, x + r, y + r // 2),
+                  outline=(96, 94, 96, 255))
+
+
+def t_mud(d, rng):
+    speckle(d, rng, (94, 82, 60, 255),
+            [(106, 94, 70, 255), (82, 72, 52, 255), (74, 78, 56, 255)], n=180)
+
+
+def t_tree(d, rng):
+    speckle(d, rng, (44, 78, 40, 255),
+            [(54, 92, 48, 255), (36, 66, 34, 255)], n=140)
+    for _ in range(12):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        r = rng.randrange(2, 5)
+        d.ellipse((x - r, y - r, x + r, y + r), fill=(62, 104, 54, 255))
+    for _ in range(8):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.point((x, y), fill=(90, 138, 74, 255))
+
+
+def t_shrub(d, rng):
+    speckle(d, rng, (66, 100, 52, 255),
+            [(80, 118, 62, 255), (54, 84, 44, 255), (96, 134, 72, 255)], n=200)
+
+
+def t_underbrush(d, rng):
+    speckle(d, rng, (84, 96, 52, 255),
+            [(100, 114, 62, 255), (70, 80, 44, 255), (110, 96, 60, 255)],
+            n=200)
+    for _ in range(10):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x + rng.choice((-2, 2)), y - rng.randrange(2, 4)),
+               fill=(118, 128, 70, 255))
+
+
+def t_door(d, rng):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=(134, 96, 60, 255))
+    d.rectangle((2, 2, TER_CELL - 3, TER_CELL - 3),
+                outline=(104, 72, 44, 255))
+    d.rectangle((6, 5, TER_CELL - 7, 14), outline=(104, 72, 44, 255))
+    d.rectangle((6, 18, TER_CELL - 7, 27), outline=(104, 72, 44, 255))
+    d.ellipse((24, 15, 27, 18), fill=(210, 190, 120, 255))
+
+
+def t_window(d, rng):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=(140, 138, 136, 255))
+    d.rectangle((3, 3, TER_CELL - 4, TER_CELL - 4), fill=(158, 196, 220, 255))
+    d.rectangle((3, 3, TER_CELL - 4, TER_CELL - 4),
+                outline=(110, 108, 106, 255))
+    d.line((TER_CELL // 2, 3, TER_CELL // 2, TER_CELL - 4),
+           fill=(110, 108, 106, 255))
+    d.line((3, TER_CELL // 2, TER_CELL - 4, TER_CELL // 2),
+           fill=(110, 108, 106, 255))
+    d.line((6, 6, 12, 12), fill=(210, 232, 244, 255))
+
+
+def t_dirt_side(d, rng):
+    speckle(d, rng, (108, 84, 58, 255),
+            [(122, 96, 68, 255), (94, 72, 50, 255), (130, 106, 78, 255)],
+            n=190)
+    # buried stones
+    for _ in range(5):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(8, TER_CELL)
+        d.ellipse((x, y, x + 3, y + 2), fill=(140, 134, 126, 255))
+
+
+def t_wood_side(d, rng):
+    base = (128, 92, 58, 255)
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=base)
+    for y in range(0, TER_CELL, 8):
+        d.line((0, y, TER_CELL - 1, y), fill=(96, 66, 42, 255))
+        for _ in range(8):
+            x = rng.randrange(TER_CELL)
+            yy = y + 1 + rng.randrange(7)
+            d.line((x, yy, x + rng.randrange(2, 6), yy),
+                   fill=(112, 80, 50, 255))
+
+
+def t_metal(d, rng):
+    speckle(d, rng, (122, 128, 136, 255),
+            [(134, 140, 148, 255), (110, 116, 124, 255)], n=90)
+    for x in (4, 27):
+        for y in (4, 27):
+            d.ellipse((x - 1, y - 1, x + 1, y + 1), fill=(90, 96, 104, 255))
+    d.line((0, 15, 31, 15), fill=(104, 110, 118, 255))
+
+
+TERRAIN_DRAW = {
+    "grass": t_grass, "tall_grass": t_tall_grass, "dirt": t_dirt,
+    "sand": t_sand, "gravel": t_gravel, "pavement": t_pavement,
+    "sidewalk": t_sidewalk, "concrete": t_concrete,
+    "floor_wood": t_floor_wood, "wall_brick": t_wall_brick,
+    "wall_concrete": t_wall_concrete, "roof": t_roof, "water": t_water,
+    "deep_water": t_deep_water, "rock": t_rock, "mud": t_mud,
+    "tree": t_tree, "shrub": t_shrub, "underbrush": t_underbrush,
+    "door": t_door, "window": t_window, "dirt_side": t_dirt_side,
+    "wood_side": t_wood_side, "metal": t_metal,
+}
+
+
+def build_entities():
     atlas = Image.new("RGBA", (CELL * COLS, CELL * ROWS), (0, 0, 0, 0))
     for i, name in enumerate(LAYOUT):
         cell = Cell()
         DRAW[name](cell)
-        col = i % COLS
-        row = i // COLS
-        atlas.paste(cell.img, (col * CELL, row * CELL))
-    out_dir = os.path.join(os.path.dirname(__file__), "..", "..", "gfx", "Block3D")
-    out_dir = os.path.abspath(out_dir)
+        atlas.paste(cell.img, ((i % COLS) * CELL, (i // COLS) * CELL))
+    return atlas
+
+
+def build_terrain():
+    atlas = Image.new("RGBA", (TER_CELL * TER_COLS, TER_CELL * TER_ROWS),
+                      (0, 0, 0, 0))
+    for i, name in enumerate(TERRAIN_LAYOUT):
+        tile = Image.new("RGBA", (TER_CELL, TER_CELL), (0, 0, 0, 0))
+        d = ImageDraw.Draw(tile)
+        TERRAIN_DRAW[name](d, random.Random(hash(name) & 0xFFFF))
+        atlas.paste(tile, ((i % TER_COLS) * TER_CELL,
+                           (i // TER_COLS) * TER_CELL))
+    return atlas
+
+
+def c_array(name, data):
+    lines = [f"const unsigned char {name}[] = {{"]
+    for i in range(0, len(data), 20):
+        lines.append("    " + ",".join(str(b) for b in data[i:i + 20]) + ",")
+    lines.append("};")
+    lines.append(f"const unsigned int {name}_len = {len(data)};")
+    return "\n".join(lines)
+
+
+def main():
+    import io
+    import os
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    out_dir = os.path.join(root, "gfx", "Block3D")
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, "entities.png")
-    atlas.save(out)
-    print("wrote", out, atlas.size, "cells:", len(LAYOUT))
+
+    entities = build_entities()
+    terrain = build_terrain()
+    entities.save(os.path.join(out_dir, "entities.png"))
+    terrain.save(os.path.join(out_dir, "terrain.png"))
+
+    # Embed both PNGs as C arrays so the renderer can never miss them at
+    # runtime, whatever the install layout.
+    bufs = {}
+    for name, img in (("block3d_entities_png", entities),
+                      ("block3d_terrain_png", terrain)):
+        b = io.BytesIO()
+        img.save(b, format="PNG", optimize=True)
+        bufs[name] = b.getvalue()
+
+    src = os.path.join(root, "src", "block3d_atlas.cpp")
+    with open(src, "w") as f:
+        f.write("// Generated by tools/gfx/gen_block3d_sprites.py — do not "
+                "edit by hand.\n")
+        f.write("// Embedded built-in sprite/texture atlases for the "
+                "block_3d renderer.\n")
+        f.write('#include "block3d_atlas.h"\n\n')
+        for name, data in bufs.items():
+            f.write(c_array(name, data))
+            f.write("\n\n")
+    print("wrote", src, {k: len(v) for k, v in bufs.items()})
+    print("wrote", os.path.join(out_dir, "entities.png"), entities.size)
+    print("wrote", os.path.join(out_dir, "terrain.png"), terrain.size)
 
 
 if __name__ == "__main__":
