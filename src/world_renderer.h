@@ -71,6 +71,20 @@ class world_renderer
         virtual point_bub_ms screen_to_map( const point &screen_pos, const point &tile_size,
                                             const point &win_size,
                                             const point_bub_ms &center ) const;
+
+        /**
+         * Offer the backend the zoom keypress before the normal tileset
+         * rescale runs.  Return true to consume it — the block_3d backend
+         * enters its first-person view when zooming in past the maximum
+         * tile zoom, and leaves it again on zoom out.  The default ignores
+         * the event so standard zoom behavior applies.
+         */
+        virtual bool handle_zoom_in() {
+            return false;
+        }
+        virtual bool handle_zoom_out() {
+            return false;
+        }
 };
 
 /** The backend selected by the WORLD_RENDERER display option. */

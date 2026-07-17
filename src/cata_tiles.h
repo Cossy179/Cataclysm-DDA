@@ -628,6 +628,15 @@ class cata_tiles
         bool get_sprite_ref( const std::string &id, SDL_Texture *&tex, SDL_Rect &src ) const;
 
         /**
+         * Unzoomed tile size of the loaded tileset config, for classifying
+         * ASCII-class tilesets independently of the current zoom level
+         * (get_tile_width() scales with zoom).
+         */
+        int get_base_tile_width() const {
+            return tileset_ptr ? tileset_ptr->get_tile_width() : 0;
+        }
+
+        /**
          * Category-aware variant of get_sprite_ref: resolves the id through
          * the tileset's looks_like fallback chain for that category (used by
          * the block_3d backend for item sprites, which lean on looks_like).

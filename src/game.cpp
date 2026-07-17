@@ -222,6 +222,9 @@
 #include "vpart_range.h"
 #include "wcwidth.h"
 #include "weakpoint.h"
+#if defined(TILES)
+#include "world_renderer.h"
+#endif
 #include "weather.h"
 #include "weather_type.h"
 #include "worldfactory.h"
@@ -6365,14 +6368,22 @@ void game::draw_trail_to_square( const tripoint_rel_ms &t, bool bDrawX )
 
 #if defined(TILES)
 static constexpr int MAXIMUM_ZOOM_LEVEL = 4;
+// Most zoomed-in tileset scale (16 = 1x): 128 = 8x, one extra step beyond
+// the historical 64 so the 3D block view can be inspected up close.
+static constexpr int MAXIMUM_TILESET_ZOOM = 128;
 #endif
 void game::zoom_out()
 {
 #if defined(TILES)
+    // The active world renderer may consume the zoom step (leaving the
+    // block_3d first-person view) before the tileset rescales.
+    if( get_active_world_renderer().handle_zoom_out() ) {
+        return;
+    }
     if( uistate.tileset_zoom > MAXIMUM_ZOOM_LEVEL ) {
         uistate.tileset_zoom = uistate.tileset_zoom / 2;
     } else {
-        uistate.tileset_zoom = 64;
+        uistate.tileset_zoom = MAXIMUM_TILESET_ZOOM;
     }
     rescale_tileset( uistate.tileset_zoom );
 #endif
@@ -6393,7 +6404,12 @@ void game::zoom_out_overmap()
 void game::zoom_in()
 {
 #if defined(TILES)
-    if( uistate.tileset_zoom == 64 ) {
+    // The active world renderer may consume the zoom step (entering the
+    // block_3d first-person view at maximum zoom) before the wrap-around.
+    if( get_active_world_renderer().handle_zoom_in() ) {
+        return;
+    }
+    if( uistate.tileset_zoom >= MAXIMUM_TILESET_ZOOM ) {
         uistate.tileset_zoom = MAXIMUM_ZOOM_LEVEL;
     } else {
         uistate.tileset_zoom = uistate.tileset_zoom * 2;

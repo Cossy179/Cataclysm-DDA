@@ -3765,9 +3765,33 @@ class block_3d_world_renderer : public world_renderer
             return "block_3d";
         }
 
+        // Zooming in past the maximum tile zoom drops into the first-person
+        // view; zooming out steps back to the axonometric block view.
+        bool handle_zoom_in() override {
+            if( first_person_ ) {
+                return true;
+            }
+            if( uistate.tileset_zoom >= 128 ) {
+                first_person_ = true;
+                return true;
+            }
+            return false;
+        }
+        bool handle_zoom_out() override {
+            if( first_person_ ) {
+                first_person_ = false;
+                return true;
+            }
+            return false;
+        }
+
         point_bub_ms screen_to_map( const point &screen_pos, const point &/* tile_size */,
                                     const point &win_size,
                                     const point_bub_ms &center ) const override {
+            if( first_person_ ) {
+                // No grid inverse in first person; pick the avatar's cell.
+                return center;
+            }
             // Invert this backend's own projection on the ground plane
             // (slab tops at 0.125 blocks), matching what the eye sees.
             render_3d::camera cam;
@@ -3845,6 +3869,27 @@ class block_3d_world_renderer : public world_renderer
                                        wt.precip == precip_class::none;
                     render_3d::weather_grading( attenuation, raining, snowing, foggy, env_ );
                 }
+            }
+
+            // Track the avatar's facing from their last horizontal move so
+            // the first-person camera looks the way the player is walking.
+            {
+                const tripoint_abs_ms abs_pos = here.get_abs( you.pos_bub() );
+                if( have_last_pos_ && abs_pos != last_av_pos_ ) {
+                    const int mdx = abs_pos.x() - last_av_pos_.x();
+                    const int mdy = abs_pos.y() - last_av_pos_.y();
+                    if( mdx != 0 || mdy != 0 ) {
+                        heading_ = std::atan2( static_cast<float>( mdy ),
+                                               static_cast<float>( mdx ) );
+                    }
+                }
+                last_av_pos_ = abs_pos;
+                have_last_pos_ = true;
+            }
+
+            if( first_person_ ) {
+                render_first_person( scene, here, you );
+                return;
             }
 
             int u_min = 0;
@@ -4540,6 +4585,305 @@ class block_3d_world_renderer : public world_renderer
             }
         }
 
+        // First-person view: a classic grid raycaster over the same map,
+        // textures and lighting the axonometric view uses. Entered by
+        // zooming in past maximum zoom (handle_zoom_in); the simulation
+        // stays turn-based — walking turns the camera to face the way the
+        // avatar last moved. Opaque walls end a ray; see-through obstacles
+        // (windows, fences) draw as half-height walls the ray passes over.
+        void render_first_person( const render_scene &scene, map &here, const avatar &you ) {
+            const int vw = scene.width;
+            const int vh = scene.height;
+            const SDL_Rect viewport{ scene.dest.x, scene.dest.y, vw, vh };
+            const float ox = static_cast<float>( scene.dest.x );
+            const float oy = static_cast<float>( scene.dest.y );
+            verts_.clear();
+            runs_.clear();
+            const auto begin_run = [&]( SDL_Texture * tex ) {
+                if( !runs_.empty() && runs_.back().tex == tex ) {
+                    return;
+                }
+                if( !runs_.empty() ) {
+                    runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
+                }
+                runs_.push_back( tex_run{ tex, static_cast<int>( verts_.size() ), 0 } );
+            };
+            const auto push_quad = [&]( const float x0, const float y0, const float x1,
+                                        const float y1, const render_3d::rgba & c,
+                                        const float u0, const float v0,
+            const float u1, const float v1 ) {
+                verts_.push_back( render_3d::vtx{ ox + x0, oy + y0, c, u0, v0, 0.0f } );
+                verts_.push_back( render_3d::vtx{ ox + x1, oy + y0, c, u1, v0, 0.0f } );
+                verts_.push_back( render_3d::vtx{ ox + x1, oy + y1, c, u1, v1, 0.0f } );
+                verts_.push_back( render_3d::vtx{ ox + x0, oy + y0, c, u0, v0, 0.0f } );
+                verts_.push_back( render_3d::vtx{ ox + x1, oy + y1, c, u1, v1, 0.0f } );
+                verts_.push_back( render_3d::vtx{ ox + x0, oy + y1, c, u0, v1, 0.0f } );
+            };
+
+            // Sky above the horizon, ground plane below it.
+            const render_3d::rgba sky = render_3d::grade(
+                                            you.posz() >= 0
+                                            ? ( sun_up_ ? render_3d::rgba{ 118, 168, 214, 255 }
+                                                : render_3d::rgba{ 16, 20, 32, 255 } )
+                                            : render_3d::rgba{ 10, 10, 12, 255 }, env_ );
+            const render_3d::rgba ground = render_3d::grade(
+                                               render_3d::shade( render_3d::rgba{ 82, 74, 64, 255 },
+                                                       sun_up_ ? 0.9f : 0.45f ), env_ );
+            begin_run( nullptr );
+            push_quad( 0.0f, 0.0f, static_cast<float>( vw ), vh / 2.0f, sky,
+                       0.0f, 0.0f, 0.0f, 0.0f );
+            push_quad( 0.0f, vh / 2.0f, static_cast<float>( vw ), static_cast<float>( vh ),
+                       ground, 0.0f, 0.0f, 0.0f, 0.0f );
+
+            const float eye_h = 0.55f;
+            const float foot_h = 0.125f;
+            const float tan_half_fov = 0.66f;
+            const float dirx = std::cos( heading_ );
+            const float diry = std::sin( heading_ );
+            const float planex = -diry * tan_half_fov;
+            const float planey = dirx * tan_half_fov;
+            const tripoint_bub_ms eye_pos = you.pos_bub();
+            const float ex = static_cast<float>( eye_pos.x() ) + 0.5f;
+            const float ey = static_cast<float>( eye_pos.y() ) + 0.5f;
+            const int pz = eye_pos.z();
+            const auto &vis_cache = here.access_cache( pz ).visibility_cache;
+            const visibility_variables &vis_vars = here.get_visibility_variables_cache();
+
+            constexpr int col_w = 2;
+            const int cols = ( vw + col_w - 1 ) / col_w;
+            fp_zbuf_.assign( cols, 1e9f );
+
+            ensure_entity_atlas();
+            struct ray_hit {
+                float dist;
+                float wallx;
+                int side;
+                tripoint_bub_ms cell;
+                bool opaque;
+            };
+            std::vector<ray_hit> hits;
+            for( int col = 0; col < cols; col++ ) {
+                const float cxn = 2.0f * ( col * col_w + col_w / 2.0f ) / vw - 1.0f;
+                const float rdx = dirx + planex * cxn;
+                const float rdy = diry + planey * cxn;
+                int mapx = eye_pos.x();
+                int mapy = eye_pos.y();
+                const float ddx = rdx == 0.0f ? 1e30f : std::fabs( 1.0f / rdx );
+                const float ddy = rdy == 0.0f ? 1e30f : std::fabs( 1.0f / rdy );
+                const int stepx = rdx < 0.0f ? -1 : 1;
+                const int stepy = rdy < 0.0f ? -1 : 1;
+                float sdx = rdx < 0.0f ? ( ex - mapx ) * ddx : ( mapx + 1.0f - ex ) * ddx;
+                float sdy = rdy < 0.0f ? ( ey - mapy ) * ddy : ( mapy + 1.0f - ey ) * ddy;
+                hits.clear();
+                bool black_wall = false;
+                float black_dist = 0.0f;
+                for( int it = 0; it < 40; it++ ) {
+                    float perp;
+                    int side;
+                    if( sdx < sdy ) {
+                        mapx += stepx;
+                        side = 0;
+                        perp = sdx;
+                        sdx += ddx;
+                    } else {
+                        mapy += stepy;
+                        side = 1;
+                        perp = sdy;
+                        sdy += ddy;
+                    }
+                    const tripoint_bub_ms p( mapx, mapy, pz );
+                    if( !here.inbounds( p ) ) {
+                        break;
+                    }
+                    if( here.get_visibility( vis_cache[mapx][mapy], vis_vars ) ==
+                        visibility_type::HIDDEN ) {
+                        black_wall = true;
+                        black_dist = perp;
+                        break;
+                    }
+                    if( here.impassable( p ) ) {
+                        const bool opaque = !here.is_transparent( p );
+                        const float hitx = side == 0 ? ey + perp * rdy : ex + perp * rdx;
+                        ray_hit h;
+                        h.dist = std::max( perp, 0.05f );
+                        h.wallx = hitx - std::floor( hitx );
+                        h.side = side;
+                        h.cell = p;
+                        h.opaque = opaque;
+                        hits.push_back( h );
+                        if( opaque || hits.size() >= 4 ) {
+                            break;
+                        }
+                    }
+                }
+                const float x0 = static_cast<float>( col * col_w );
+                const float x1 = x0 + col_w;
+                // Far to near so nearer walls composite over farther ones.
+                for( auto rit = hits.rbegin(); rit != hits.rend(); ++rit ) {
+                    const ray_hit &h = *rit;
+                    const float ppu = vh / h.dist;
+                    const float top_z = h.opaque ? 1.0f : 0.5f;
+                    const float y0 = vh / 2.0f + ( eye_h - top_z ) * ppu;
+                    const float y1 = vh / 2.0f + eye_h * ppu;
+                    const float att = std::clamp( 1.8f / ( 1.8f + 0.12f * h.dist ), 0.25f, 1.0f );
+                    const float face = h.side == 1 ? 1.0f : 0.84f;
+                    const float light = render_3d::light_factor( here.ambient_light_at( h.cell ) );
+                    const std::string tid = here.ter( h.cell ).id().str();
+                    const std::pair<ter_tex, ter_tex> cells = terrain_cells( tid );
+                    if( cells.first != ter_tex::none && terrain_atlas_ ) {
+                        render_3d::sprite_uv uv;
+                        terrain_uv( cells.second, uv );
+                        // A degenerate (zero-width) u span renders untextured
+                        // on the software rasterizer; give the column half a
+                        // texel of horizontal texture extent.
+                        const float half_texel = 0.5f / terrain_atlas_w_;
+                        const float u = std::clamp( uv.u0 + h.wallx * ( uv.u1 - uv.u0 ),
+                                                    uv.u0 + half_texel, uv.u1 - half_texel );
+                        const float v1t = h.opaque ? uv.v1 : uv.v0 + ( uv.v1 - uv.v0 ) * 0.5f;
+                        const render_3d::rgba tint = render_3d::grade(
+                                                         render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                                 light * att * face ), env_ );
+                        begin_run( terrain_atlas_.get() );
+                        push_quad( x0, y0, x1, y1, tint,
+                                   u - half_texel, uv.v0, u + half_texel, v1t );
+                    } else {
+                        const render_3d::rgba c = render_3d::grade(
+                                                      render_3d::shade( to_rgba( curses_color_to_SDL(
+                                                              here.ter( h.cell )->color() ) ),
+                                                              light * att * face ), env_ );
+                        begin_run( nullptr );
+                        push_quad( x0, y0, x1, y1, c, 0.0f, 0.0f, 0.0f, 0.0f );
+                    }
+                    if( h.opaque ) {
+                        fp_zbuf_[col] = h.dist;
+                    }
+                }
+                if( black_wall ) {
+                    // Unseen space reads as a wall of darkness.
+                    const float ppu = vh / std::max( black_dist, 0.05f );
+                    const float y0 = vh / 2.0f + ( eye_h - 1.0f ) * ppu;
+                    const float y1 = vh / 2.0f + eye_h * ppu;
+                    begin_run( nullptr );
+                    push_quad( x0, y0, x1, y1, render_3d::rgba{ 0, 0, 0, 255 },
+                               0.0f, 0.0f, 0.0f, 0.0f );
+                    fp_zbuf_[col] = std::min( fp_zbuf_[col], std::max( black_dist, 0.05f ) );
+                }
+            }
+
+            // Creatures as camera-facing sprites, column-depth-tested against
+            // the walls and painted far to near.
+            struct fp_sprite {
+                float depth;
+                float sx;
+                SDL_Texture *tex;
+                render_3d::sprite_uv uv;
+                render_3d::rgba tint;
+                bool textured;
+            };
+            std::vector<fp_sprite> sprites;
+            creature_tracker &creatures = get_creature_tracker();
+            const float invdet = 1.0f / ( planex * diry - dirx * planey );
+            for( int sdy = -24; sdy <= 24; sdy++ ) {
+                for( int sdx = -24; sdx <= 24; sdx++ ) {
+                    if( sdx == 0 && sdy == 0 ) {
+                        continue;
+                    }
+                    const tripoint_bub_ms p = you.pos_bub() + tripoint( sdx, sdy, 0 );
+                    if( !here.inbounds( p ) ) {
+                        continue;
+                    }
+                    const Creature *const critter = creatures.creature_at( p, true );
+                    if( critter == nullptr || !you.sees( here, *critter ) ) {
+                        continue;
+                    }
+                    const float relx = p.x() + 0.5f - ex;
+                    const float rely = p.y() + 0.5f - ey;
+                    const float tx = invdet * ( diry * relx - dirx * rely );
+                    const float tdepth = invdet * ( -planey * relx + planex * rely );
+                    if( tdepth < 0.15f ) {
+                        continue;
+                    }
+                    fp_sprite s;
+                    s.depth = tdepth;
+                    s.sx = ( vw / 2.0f ) * ( 1.0f + tx / tdepth );
+                    const float light = render_3d::light_factor( here.ambient_light_at( p ) );
+                    const float att = std::clamp( 1.8f / ( 1.8f + 0.12f * tdepth ), 0.25f, 1.0f );
+                    s.tint = render_3d::grade( render_3d::shade(
+                                                   render_3d::rgba{ 255, 255, 255, 255 }, light * att ), env_ );
+                    float aspect = 1.0f;
+                    bool used_builtin = false;
+                    bool have = false;
+                    if( const Character *const ch = critter->as_character() ) {
+                        const std::string base_id = ch->is_npc()
+                                                    ? ( ch->male ? "npc_male" : "npc_female" )
+                                                    : ( ch->male ? "player_male" : "player_female" );
+                        have = resolve_sprite( character_art( *ch ),
+                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                            return sprite_for( base_id, t, u, a );
+                        }, s.tex, s.uv, aspect, used_builtin );
+                    } else if( const monster *const mon = critter->as_monster() ) {
+                        const std::string mon_id = mon->type->id.str();
+                        have = resolve_sprite( monster_art( *mon ),
+                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                            return sprite_for( mon_id, t, u, a );
+                        }, s.tex, s.uv, aspect, used_builtin );
+                    }
+                    s.textured = have;
+                    if( !have ) {
+                        s.tex = nullptr;
+                        s.tint = render_3d::grade( render_3d::shade(
+                                                       to_rgba( curses_color_to_SDL( critter->symbol_color() ) ),
+                                                       light * att ), env_ );
+                    }
+                    sprites.push_back( s );
+                }
+            }
+            std::sort( sprites.begin(), sprites.end(),
+            []( const fp_sprite & a, const fp_sprite & b ) {
+                return a.depth > b.depth;
+            } );
+            for( const fp_sprite &s : sprites ) {
+                const float ppu = vh / s.depth;
+                const float h = 0.75f * ppu;
+                const float w = 0.75f * ppu;
+                const float feet = vh / 2.0f + ( eye_h - foot_h ) * ppu;
+                const float sx0 = s.sx - w / 2.0f;
+                const float sx1 = s.sx + w / 2.0f;
+                const int c0 = std::max( 0, static_cast<int>( sx0 ) / col_w );
+                const int c1 = std::min( cols - 1, static_cast<int>( sx1 ) / col_w );
+                for( int cc = c0; cc <= c1; cc++ ) {
+                    if( s.depth >= fp_zbuf_[cc] ) {
+                        continue;
+                    }
+                    const float px0 = static_cast<float>( cc * col_w );
+                    const float px1 = px0 + col_w;
+                    const float f0 = std::clamp( ( px0 - sx0 ) / w, 0.0f, 1.0f );
+                    const float f1 = std::clamp( ( px1 - sx0 ) / w, 0.0f, 1.0f );
+                    if( s.textured ) {
+                        begin_run( s.tex );
+                        push_quad( px0, feet - h, px1, feet, s.tint,
+                                   s.uv.u0 + f0 * ( s.uv.u1 - s.uv.u0 ), s.uv.v0,
+                                   s.uv.u0 + f1 * ( s.uv.u1 - s.uv.u0 ), s.uv.v1 );
+                    } else {
+                        begin_run( nullptr );
+                        push_quad( px0, feet - h, px1, feet, s.tint,
+                                   0.0f, 0.0f, 0.0f, 0.0f );
+                    }
+                }
+            }
+
+            if( !runs_.empty() ) {
+                runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
+            }
+            RenderSetClipRect( renderer, &viewport );
+            for( const tex_run &run : runs_ ) {
+                if( run.count > 0 ) {
+                    RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
+                }
+            }
+            RenderSetClipRect( renderer, nullptr );
+        }
+
         // A soft dark contact-shadow decal on the ground under a billboard,
         // so characters, monsters and items read as standing in the world
         // instead of floating — especially indoors/underground, where the sun
@@ -4972,9 +5316,12 @@ class block_3d_world_renderer : public world_renderer
 
         // True when the active tileset is ASCII-class (tiny glyphs) or absent,
         // so the built-in entity art should stand in for the tileset's own
-        // sprites. Real graphical tilesets (>=24px tiles) keep their art.
+        // sprites. Real graphical tilesets (>=24px base tiles) keep their
+        // art. Uses the unzoomed base size — the scaled width crosses the
+        // threshold when zooming in, which used to swap the character
+        // sprites for ASCII glyphs mid-zoom.
         bool use_builtin_art() const {
-            return !tilecontext || tilecontext->get_tile_width() < 24;
+            return !tilecontext || tilecontext->get_base_tile_width() < 24;
         }
 
         static bool texture_dims( SDL_Texture *const tex, float &w, float &h ) {
@@ -5426,6 +5773,13 @@ class block_3d_world_renderer : public world_renderer
         bool sun_up_ = false;
         int sun_step_x_ = 0;
         int sun_step_y_ = 0;
+        // First-person state: active flag, camera heading (radians, from the
+        // avatar's last move), and the per-column wall depth buffer.
+        bool first_person_ = false;
+        float heading_ = -static_cast<float>( M_PI ) / 2.0f;
+        bool have_last_pos_ = false;
+        tripoint_abs_ms last_av_pos_;
+        std::vector<float> fp_zbuf_;
 };
 
 } // namespace

@@ -23,6 +23,7 @@
 #include "sdl_wrappers.h"
 #include "sdltiles.h"
 #include "type_id.h"
+#include "uistate.h"
 #include "world_renderer.h"
 
 static const ter_str_id ter_t_wall( "t_wall" );
@@ -185,6 +186,70 @@ TEST_CASE( "block_3d_renderer_draws_characters", "[tiles][render_3d]" )
     }
     // Avatar diamond (fallback) plus the NPC marker must land on the target.
     CHECK( lit_pixels > 0 );
+}
+
+// First-person mode: zooming in past maximum tile zoom enters it through
+// the world_renderer zoom hooks, the raycast view draws (sky at minimum),
+// and zooming out leaves it again.
+TEST_CASE( "block_3d_first_person_smoke", "[tiles][render_3d]" )
+{
+    software_render_fixture fx;
+    if( !fx.available() ) {
+        WARN( "dummy SDL video backend unavailable; skipping" );
+        return;
+    }
+
+    clear_avatar();
+    clear_map();
+    map &here = get_map();
+    set_time_to_day();
+    avatar &you = get_avatar();
+    // A wall ahead of the default (north-facing) heading so the view has
+    // both sky and wall geometry.
+    here.ter_set( you.pos_bub() + tripoint{ 0, -3, 0 }, ter_t_wall );
+    here.build_map_cache( 0 );
+
+    override_option opt( "WORLD_RENDERER", "block_3d" );
+    world_renderer &wr = get_active_world_renderer();
+    REQUIRE( wr.id() == "block_3d" );
+
+    const int saved_zoom = uistate.tileset_zoom;
+    uistate.tileset_zoom = 128;
+    // Below max zoom the hook declines; at max it enters first person.
+    uistate.tileset_zoom = 64;
+    CHECK_FALSE( wr.handle_zoom_in() );
+    uistate.tileset_zoom = 128;
+    REQUIRE( wr.handle_zoom_in() );
+
+    constexpr int view_size = 64;
+    const render_scene scene{ point::zero, you.pos_bub(), view_size, view_size };
+    std::multimap<point, formatted_text> overlay_strings;
+    color_block_overlay_container color_blocks;
+    wr.draw_world( scene, overlay_strings, color_blocks );
+
+    std::vector<Uint32> pixels( static_cast<size_t>( view_size ) * view_size, 0 );
+    const SDL_Rect rect{ 0, 0, view_size, view_size };
+    REQUIRE( RenderReadPixels( get_sdl_renderer(), &rect, SDL_PIXELFORMAT_ARGB8888,
+                               pixels.data(), view_size * 4 ) );
+    int lit_pixels = 0;
+    for( const Uint32 px : pixels ) {
+        if( ( px & 0x00FFFFFF ) != 0 ) {
+            lit_pixels++;
+        }
+    }
+    // The daytime sky alone guarantees a mostly-lit frame.
+    CHECK( lit_pixels > view_size * view_size / 4 );
+
+    // Picking in first person resolves to the avatar's cell.
+    CHECK( wr.screen_to_map( point( 10, 10 ), point( 32, 32 ),
+                             point( view_size, view_size ),
+                             you.pos_bub().xy() ) == point_bub_ms( you.pos_bub().xy() ) );
+
+    // Zoom out leaves first person and consumes the step; the next one
+    // falls through to the normal zoom path.
+    REQUIRE( wr.handle_zoom_out() );
+    CHECK_FALSE( wr.handle_zoom_out() );
+    uistate.tileset_zoom = saved_zoom;
 }
 
 // The overlay/animation snapshot the block_3d backend consumes each frame:

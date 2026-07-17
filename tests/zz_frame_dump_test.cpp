@@ -27,6 +27,7 @@
 #include "sdl_wrappers.h"
 #include "sdltiles.h"
 #include "type_id.h"
+#include "uistate.h"
 #include "world_renderer.h"
 
 static const ter_str_id ter_t_grass( "t_grass" );
@@ -71,11 +72,12 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
             here.ter_set( c + point( dx, dy ), ter_t_water_dp );
         }
     }
-    // Building: 7x6 brick shell, wood floor inside, door gap.
-    for( int dx = 2; dx <= 8; dx++ ) {
-        for( int dy = 2; dy <= 7; dy++ ) {
-            const bool edge = dx == 2 || dx == 8 || dy == 2 || dy == 7;
-            if( edge && !( dx == 5 && dy == 2 ) ) {
+    // Building: 7x6 brick shell, wood floor inside, door gap. Placed a few
+    // cells southeast so the first-person dump views it from outside.
+    for( int dx = 5; dx <= 11; dx++ ) {
+        for( int dy = 5; dy <= 10; dy++ ) {
+            const bool edge = dx == 5 || dx == 11 || dy == 5 || dy == 10;
+            if( edge && !( dx == 8 && dy == 5 ) ) {
                 here.ter_set( c + point( dx, dy ), ter_t_brick_wall );
             } else {
                 here.ter_set( c + point( dx, dy ), ter_t_floor );
@@ -115,16 +117,32 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
 
     std::vector<Uint32> pixels( static_cast<size_t>( vw ) * vh, 0 );
     const SDL_Rect rect{ 0, 0, vw, vh };
-    REQUIRE( RenderReadPixels( get_sdl_renderer(), &rect, SDL_PIXELFORMAT_ARGB8888,
-                               pixels.data(), vw * 4 ) );
+    const auto save_frame = [&]( const char *const name ) {
+        REQUIRE( RenderReadPixels( get_sdl_renderer(), &rect, SDL_PIXELFORMAT_ARGB8888,
+                                   pixels.data(), vw * 4 ) );
+        SDL_Surface *dump = SDL_CreateSurfaceFrom( vw, vh, SDL_PIXELFORMAT_ARGB8888,
+                            pixels.data(), vw * 4 );
+        REQUIRE( dump != nullptr );
+        REQUIRE( SDL_SaveBMP( dump, name ) );
+        SDL_DestroySurface( dump );
+    };
+    save_frame( "block3d_frame.bmp" );
+
+    // First-person: step the avatar southeast so the tracked heading faces
+    // the brick building, then enter the mode via the zoom hook and draw.
+    you.setpos( here, c + tripoint{ 1, 1, 0 } );
+    here.build_map_cache( 0 );
+    here.invalidate_visibility_cache();
+    here.update_visibility_cache( 0 );
+    uistate.tileset_zoom = 128;
+    REQUIRE( wr.handle_zoom_in() );
+    const render_scene fp_scene{ point::zero, you.pos_bub(), vw, vh };
+    wr.draw_world( fp_scene, overlay_strings, color_blocks );
+    save_frame( "block3d_fp.bmp" );
+    REQUIRE( wr.handle_zoom_out() );
+
     SDL_SetRenderTarget( get_sdl_renderer().get(), prev_target );
     SDL_DestroyTexture( target );
-
-    SDL_Surface *dump = SDL_CreateSurfaceFrom( vw, vh, SDL_PIXELFORMAT_ARGB8888,
-                        pixels.data(), vw * 4 );
-    REQUIRE( dump != nullptr );
-    REQUIRE( SDL_SaveBMP( dump, "block3d_frame.bmp" ) );
-    SDL_DestroySurface( dump );
 }
 
 #endif // SDL_MAJOR_VERSION >= 3
