@@ -3884,6 +3884,13 @@ class block_3d_world_renderer : public world_renderer
             sun_step_y_ = 0;
             sun_shadow_x_ = 0.0f;
             sun_shadow_y_ = 0.0f;
+            raining_ = false;
+            snowing_ = false;
+            if( center.z() >= 0 ) {
+                const weather_type &wt_now = get_weather().weather_id.obj();
+                raining_ = wt_now.rains && wt_now.precip >= precip_class::light;
+                snowing_ = !wt_now.rains && wt_now.precip != precip_class::none;
+            }
             if( center.z() >= 0 ) {
                 const std::optional<rl_vec2d> shadow = sunlight_angle( calendar::turn );
                 sun_up_ = shadow.has_value();
@@ -4185,9 +4192,51 @@ class block_3d_world_renderer : public world_renderer
 #if SDL_MAJOR_VERSION >= 3
             apply_scene_post( viewport );
 #endif
+            emit_weather_overlay( viewport, here, you );
         }
 
     private:
+        // Falling-precipitation overlay: screen-space rain streaks or
+        // wobbling snowflakes animated on the wall clock, drawn over the
+        // finished frame in both views. Skipped when the avatar is under a
+        // roof (no sky in sight to fall from).
+        void emit_weather_overlay( const SDL_Rect &viewport, map &here, const avatar &you ) {
+            if( ( !raining_ && !snowing_ ) || !here.is_outside( you.pos_bub() ) ) {
+                return;
+            }
+            const uint32_t t = SDL_GetTicks();
+            static std::vector<render_3d::vtx> wverts;
+            wverts.clear();
+            const int n = raining_ ? 260 : 190;
+            const float span = static_cast<float>( viewport.h ) + 24.0f;
+            const auto quad = [&]( const float x, const float y, const float w,
+            const float h, const render_3d::rgba & c ) {
+                const float x0 = viewport.x + x;
+                const float y0 = viewport.y + y;
+                wverts.push_back( render_3d::vtx{ x0, y0, c, 0.0f, 0.0f, 0.0f } );
+                wverts.push_back( render_3d::vtx{ x0 + w, y0, c, 0.0f, 0.0f, 0.0f } );
+                wverts.push_back( render_3d::vtx{ x0 + w, y0 + h, c, 0.0f, 0.0f, 0.0f } );
+                wverts.push_back( render_3d::vtx{ x0, y0, c, 0.0f, 0.0f, 0.0f } );
+                wverts.push_back( render_3d::vtx{ x0 + w, y0 + h, c, 0.0f, 0.0f, 0.0f } );
+                wverts.push_back( render_3d::vtx{ x0, y0 + h, c, 0.0f, 0.0f, 0.0f } );
+            };
+            for( int i = 0; i < n; i++ ) {
+                const uint32_t h1 = ( static_cast<uint32_t>( i ) * 2654435761u ) ^ 0x9e3779b9u;
+                const float px = ( h1 % 1009 ) / 1009.0f * viewport.w;
+                const float phase = ( ( h1 >> 11 ) % 1013 ) / 1013.0f * span;
+                if( raining_ ) {
+                    const float py = std::fmod( phase + t * 0.55f, span ) - 12.0f;
+                    quad( px, py, 1.5f, 9.0f, render_3d::rgba{ 168, 190, 214, 150 } );
+                } else {
+                    const float py = std::fmod( phase + t * 0.06f, span ) - 12.0f;
+                    const float wob = std::sin( t * 0.0018f + i * 1.7f ) * 6.0f;
+                    quad( px + wob, py, 2.5f, 2.5f, render_3d::rgba{ 240, 244, 250, 200 } );
+                }
+            }
+            RenderSetClipRect( renderer, &viewport );
+            RenderTriangles( renderer, wverts.data(), static_cast<int>( wverts.size() ) );
+            RenderSetClipRect( renderer, nullptr );
+        }
         enum class entry_kind : uint8_t {
             block,      // base_h..top_h extruded block
             billboard,  // creature/avatar diamond; base_h is the foot height
@@ -4434,8 +4483,19 @@ class block_3d_world_renderer : public world_renderer
                             ovp->vehicle().get_display_of_tile( ovp->mount_pos() );
                         const nc_color part_color = disp.color == c_black ? c_light_gray : disp.color;
                         top_h = 0.5f;
-                        push( draw_entry{ dx, dy, dz, 0.125f, top_h, tile_color( part_color ),
-                                          entry_kind::block } );
+                        draw_entry veh_e{ dx, dy, dz, 0.125f, top_h, tile_color( part_color ),
+                                          entry_kind::block };
+                        // Metal texture tinted by the part color, so cars
+                        // read as painted metal instead of flat slabs.
+                        ensure_entity_atlas();
+                        if( terrain_atlas_ ) {
+                            veh_e.tex = terrain_atlas_.get();
+                            terrain_uv( ter_tex::metal, veh_e.uv );
+                            terrain_uv( ter_tex::metal, veh_e.side_uv );
+                            veh_e.side_textured = true;
+                            veh_e.tint = tile_color( part_color );
+                        }
+                        push( veh_e );
                     } else if( here.has_furn( p ) ) {
                         top_h = 0.5f;
                         draw_entry furn_e{ dx, dy, dz, 0.125f, top_h,
@@ -5263,6 +5323,44 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
             RenderSetClipRect( renderer, nullptr );
+            draw_fp_compass( viewport );
+            emit_weather_overlay( viewport, here, you );
+        }
+
+        // A minimal compass ring at the top of the first-person view: eight
+        // direction ticks rotating with the camera (forward is always up),
+        // north highlighted red — facing matters in a turn-based game.
+        void draw_fp_compass( const SDL_Rect &viewport ) {
+            static std::vector<render_3d::vtx> cv;
+            cv.clear();
+            const float cx = viewport.x + viewport.w / 2.0f;
+            const float cy = viewport.y + 34.0f;
+            const float r = 24.0f;
+            for( int k = 0; k < 8; k++ ) {
+                // k = 0 is north (world -y).
+                const float a_world = k * ( static_cast<float>( M_PI ) / 4.0f ) -
+                                      static_cast<float>( M_PI ) / 2.0f;
+                const float rel = a_world - ease_heading_;
+                const float px = cx + std::sin( rel ) * r;
+                const float py = cy - std::cos( rel ) * r;
+                const bool north = k == 0;
+                const bool cardinal = k % 2 == 0;
+                const float s = north ? 3.5f : cardinal ? 2.5f : 1.5f;
+                const render_3d::rgba c = north
+                                          ? render_3d::rgba{ 230, 60, 50, 235 }
+                                          :
+                                          cardinal
+                                          ? render_3d::rgba{ 230, 230, 235, 190 }
+                                          :
+                                          render_3d::rgba{ 150, 150, 160, 150 };
+                cv.push_back( render_3d::vtx{ px - s, py - s, c, 0.0f, 0.0f, 0.0f } );
+                cv.push_back( render_3d::vtx{ px + s, py - s, c, 0.0f, 0.0f, 0.0f } );
+                cv.push_back( render_3d::vtx{ px + s, py + s, c, 0.0f, 0.0f, 0.0f } );
+                cv.push_back( render_3d::vtx{ px - s, py - s, c, 0.0f, 0.0f, 0.0f } );
+                cv.push_back( render_3d::vtx{ px + s, py + s, c, 0.0f, 0.0f, 0.0f } );
+                cv.push_back( render_3d::vtx{ px - s, py + s, c, 0.0f, 0.0f, 0.0f } );
+            }
+            RenderTriangles( renderer, cv.data(), static_cast<int>( cv.size() ) );
         }
 
         // A soft dark contact-shadow decal on the ground under a billboard,
@@ -6185,6 +6283,9 @@ class block_3d_world_renderer : public world_renderer
         // Two-frame texture animation phase, advanced per frame from the
         // wall clock (water ripple, and anything else that gains frames).
         bool anim_phase_ = false;
+        // Precipitation state for the falling-weather overlay.
+        bool raining_ = false;
+        bool snowing_ = false;
 };
 
 } // namespace
