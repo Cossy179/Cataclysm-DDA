@@ -85,6 +85,16 @@ class world_renderer
         virtual bool handle_zoom_out() {
             return false;
         }
+
+        /**
+         * Offer the backend a view-shift (map panning) keypress.  Return
+         * true to consume it — in the block_3d first-person view the shift
+         * keys turn the camera to face that compass direction instead of
+         * panning the map.
+         */
+        virtual bool handle_view_shift( const point &/* dir */ ) {
+            return false;
+        }
 };
 
 /** The backend selected by the WORLD_RENDERER display option. */

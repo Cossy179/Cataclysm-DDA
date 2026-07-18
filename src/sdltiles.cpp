@@ -3784,6 +3784,16 @@ class block_3d_world_renderer : public world_renderer
             }
             return false;
         }
+        // View-shift keys turn the first-person camera to face that compass
+        // direction (absolute, so "shift view north" always looks north).
+        bool handle_view_shift( const point &dir ) override {
+            if( !first_person_ || ( dir.x == 0 && dir.y == 0 ) ) {
+                return false;
+            }
+            heading_ = std::atan2( static_cast<float>( dir.y ),
+                                   static_cast<float>( dir.x ) );
+            return true;
+        }
 
         point_bub_ms screen_to_map( const point &screen_pos, const point &/* tile_size */,
                                     const point &win_size,
@@ -4649,6 +4659,86 @@ class block_3d_world_renderer : public world_renderer
             const auto &vis_cache = here.access_cache( pz ).visibility_cache;
             const visibility_variables &vis_vars = here.get_visibility_variables_cache();
 
+            // World point -> camera space: screen x and forward depth.
+            const float invdet = 1.0f / ( planex * diry - dirx * planey );
+            const auto cam_point = [&]( const float wx, const float wy,
+            float & sx, float & depth ) {
+                const float relx = wx - ex;
+                const float rely = wy - ey;
+                const float tx = invdet * ( diry * relx - dirx * rely );
+                depth = invdet * ( -planey * relx + planex * rely );
+                sx = ( vw / 2.0f ) * ( 1.0f + tx / depth );
+            };
+
+            // Textured ground: every visible walkable cell in range projects
+            // its floor top as a perspective quad, drawn before the walls so
+            // wall columns overdraw the floor behind them. Cells that clip
+            // the near plane (underfoot) keep the flat backdrop instead.
+            ensure_entity_atlas();
+            if( terrain_atlas_ ) {
+                begin_run( terrain_atlas_.get() );
+                for( int fdy = -24; fdy <= 24; fdy++ ) {
+                    for( int fdx = -24; fdx <= 24; fdx++ ) {
+                        const tripoint_bub_ms p = eye_pos + tripoint( fdx, fdy, 0 );
+                        if( !here.inbounds( p ) || here.impassable( p ) ||
+                            here.is_open_air( p ) ) {
+                            continue;
+                        }
+                        if( here.get_visibility( vis_cache[p.x()][p.y()], vis_vars ) ==
+                            visibility_type::HIDDEN ) {
+                            continue;
+                        }
+                        const std::pair<ter_tex, ter_tex> cells =
+                            terrain_cells( here.ter( p ).id().str() );
+                        if( cells.first == ter_tex::none ) {
+                            continue;
+                        }
+                        const float wx0 = static_cast<float>( p.x() );
+                        const float wy0 = static_cast<float>( p.y() );
+                        float sx[4];
+                        float sd[4];
+                        cam_point( wx0, wy0, sx[0], sd[0] );
+                        cam_point( wx0 + 1.0f, wy0, sx[1], sd[1] );
+                        cam_point( wx0 + 1.0f, wy0 + 1.0f, sx[2], sd[2] );
+                        cam_point( wx0, wy0 + 1.0f, sx[3], sd[3] );
+                        bool ok = true;
+                        bool in_view = false;
+                        for( int k = 0; k < 4; k++ ) {
+                            if( sd[k] < 0.12f ) {
+                                ok = false;
+                                break;
+                            }
+                            if( sx[k] > -vw * 0.5f && sx[k] < vw * 1.5f ) {
+                                in_view = true;
+                            }
+                        }
+                        if( !ok || !in_view ) {
+                            continue;
+                        }
+                        float sy[4];
+                        for( int k = 0; k < 4; k++ ) {
+                            sy[k] = vh / 2.0f + ( eye_h - 0.125f ) * ( vh / sd[k] );
+                        }
+                        const float center_d = ( sd[0] + sd[2] ) / 2.0f;
+                        const float att = std::clamp( 1.8f / ( 1.8f + 0.12f * center_d ),
+                                                      0.25f, 1.0f );
+                        const float light = render_3d::light_factor(
+                                                here.ambient_light_at( p ) );
+                        const render_3d::rgba tint = render_3d::grade(
+                                                         render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                                 light * att ), env_ );
+                        render_3d::sprite_uv uv;
+                        terrain_uv( cells.first, uv );
+                        verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + sx[1], oy + sy[1], tint, uv.u1, uv.v0, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + sx[3], oy + sy[3], tint, uv.u0, uv.v1, 0.0f } );
+                    }
+                }
+            }
+
             constexpr int col_w = 2;
             const int cols = ( vw + col_w - 1 ) / col_w;
             fp_zbuf_.assign( cols, 1e9f );
@@ -4770,11 +4860,12 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
 
-            // Creatures as camera-facing sprites, column-depth-tested against
-            // the walls and painted far to near.
+            // Creatures and ground items as camera-facing sprites,
+            // column-depth-tested against the walls and painted far to near.
             struct fp_sprite {
                 float depth;
                 float sx;
+                float scale;
                 SDL_Texture *tex;
                 render_3d::sprite_uv uv;
                 render_3d::rgba tint;
@@ -4782,7 +4873,6 @@ class block_3d_world_renderer : public world_renderer
             };
             std::vector<fp_sprite> sprites;
             creature_tracker &creatures = get_creature_tracker();
-            const float invdet = 1.0f / ( planex * diry - dirx * planey );
             for( int sdy = -24; sdy <= 24; sdy++ ) {
                 for( int sdx = -24; sdx <= 24; sdx++ ) {
                     if( sdx == 0 && sdy == 0 ) {
@@ -4792,50 +4882,74 @@ class block_3d_world_renderer : public world_renderer
                     if( !here.inbounds( p ) ) {
                         continue;
                     }
-                    const Creature *const critter = creatures.creature_at( p, true );
-                    if( critter == nullptr || !you.sees( here, *critter ) ) {
-                        continue;
-                    }
-                    const float relx = p.x() + 0.5f - ex;
-                    const float rely = p.y() + 0.5f - ey;
-                    const float tx = invdet * ( diry * relx - dirx * rely );
-                    const float tdepth = invdet * ( -planey * relx + planex * rely );
+                    float scr_x;
+                    float tdepth;
+                    cam_point( p.x() + 0.5f, p.y() + 0.5f, scr_x, tdepth );
                     if( tdepth < 0.15f ) {
                         continue;
                     }
-                    fp_sprite s;
-                    s.depth = tdepth;
-                    s.sx = ( vw / 2.0f ) * ( 1.0f + tx / tdepth );
                     const float light = render_3d::light_factor( here.ambient_light_at( p ) );
                     const float att = std::clamp( 1.8f / ( 1.8f + 0.12f * tdepth ), 0.25f, 1.0f );
-                    s.tint = render_3d::grade( render_3d::shade(
-                                                   render_3d::rgba{ 255, 255, 255, 255 }, light * att ), env_ );
-                    float aspect = 1.0f;
-                    bool used_builtin = false;
-                    bool have = false;
-                    if( const Character *const ch = critter->as_character() ) {
-                        const std::string base_id = ch->is_npc()
-                                                    ? ( ch->male ? "npc_male" : "npc_female" )
-                                                    : ( ch->male ? "player_male" : "player_female" );
-                        have = resolve_sprite( character_art( *ch ),
-                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
-                            return sprite_for( base_id, t, u, a );
-                        }, s.tex, s.uv, aspect, used_builtin );
-                    } else if( const monster *const mon = critter->as_monster() ) {
-                        const std::string mon_id = mon->type->id.str();
-                        have = resolve_sprite( monster_art( *mon ),
-                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
-                            return sprite_for( mon_id, t, u, a );
-                        }, s.tex, s.uv, aspect, used_builtin );
+                    const render_3d::rgba lit = render_3d::grade( render_3d::shade(
+                                                    render_3d::rgba{ 255, 255, 255, 255 }, light * att ), env_ );
+                    const Creature *const critter = creatures.creature_at( p, true );
+                    if( critter != nullptr && you.sees( here, *critter ) ) {
+                        fp_sprite s;
+                        s.depth = tdepth;
+                        s.sx = scr_x;
+                        s.scale = 0.75f;
+                        s.tint = lit;
+                        float aspect = 1.0f;
+                        bool used_builtin = false;
+                        bool have = false;
+                        if( const Character *const ch = critter->as_character() ) {
+                            const std::string base_id = ch->is_npc()
+                                                        ? ( ch->male ? "npc_male" : "npc_female" )
+                                                        : ( ch->male ? "player_male" : "player_female" );
+                            have = resolve_sprite( character_art( *ch ),
+                            [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                                return sprite_for( base_id, t, u, a );
+                            }, s.tex, s.uv, aspect, used_builtin );
+                        } else if( const monster *const mon = critter->as_monster() ) {
+                            const std::string mon_id = mon->type->id.str();
+                            have = resolve_sprite( monster_art( *mon ),
+                            [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                                return sprite_for( mon_id, t, u, a );
+                            }, s.tex, s.uv, aspect, used_builtin );
+                        }
+                        s.textured = have;
+                        if( !have ) {
+                            s.tex = nullptr;
+                            s.tint = render_3d::grade( render_3d::shade(
+                                                           to_rgba( curses_color_to_SDL( critter->symbol_color() ) ),
+                                                           light * att ), env_ );
+                        }
+                        sprites.push_back( s );
                     }
-                    s.textured = have;
-                    if( !have ) {
-                        s.tex = nullptr;
-                        s.tint = render_3d::grade( render_3d::shade(
-                                                       to_rgba( curses_color_to_SDL( critter->symbol_color() ) ),
-                                                       light * att ), env_ );
+                    // The uppermost visible item as a small ground sprite.
+                    if( here.sees_some_items( p, you ) ) {
+                        const item &top_item = here.maptile_at( p ).get_uppermost_item();
+                        fp_sprite s;
+                        s.depth = tdepth;
+                        s.sx = scr_x;
+                        s.scale = 0.3f;
+                        s.tint = lit;
+                        float aspect = 1.0f;
+                        bool used_builtin = false;
+                        const std::string item_id = top_item.typeId().str();
+                        s.textured = resolve_sprite( item_art( top_item ),
+                        [&]( SDL_Texture*&t, render_3d::sprite_uv & u, float & a ) {
+                            return sprite_for( item_id, TILE_CATEGORY::ITEM, t, u, a );
+                        }, s.tex, s.uv, aspect, used_builtin );
+                        if( !s.textured ) {
+                            s.tex = nullptr;
+                            s.tint = render_3d::grade( render_3d::shade(
+                                                           to_rgba( curses_color_to_SDL( top_item.color() ) ),
+                                                           light * att ), env_ );
+                            s.scale = 0.15f;
+                        }
+                        sprites.push_back( s );
                     }
-                    sprites.push_back( s );
                 }
             }
             std::sort( sprites.begin(), sprites.end(),
@@ -4844,8 +4958,8 @@ class block_3d_world_renderer : public world_renderer
             } );
             for( const fp_sprite &s : sprites ) {
                 const float ppu = vh / s.depth;
-                const float h = 0.75f * ppu;
-                const float w = 0.75f * ppu;
+                const float h = s.scale * ppu;
+                const float w = s.scale * ppu;
                 const float feet = vh / 2.0f + ( eye_h - foot_h ) * ppu;
                 const float sx0 = s.sx - w / 2.0f;
                 const float sx1 = s.sx + w / 2.0f;

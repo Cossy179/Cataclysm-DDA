@@ -103,6 +103,9 @@
 #include "vpart_position.h"
 #include "vpart_range.h"
 #include "weather.h"
+#if defined(TILES)
+#include "world_renderer.h"
+#endif
 #include "weather_type.h"
 #include "worldfactory.h"
 
@@ -2198,6 +2201,13 @@ static void do_deathcam_action( const action_id &act, avatar &player_character )
                 { ACTION_SHIFT_W, { point::west, point::north_west } },
                 { ACTION_SHIFT_NW, { point::north_west, point::north } },
             };
+#if defined(TILES)
+            // In the block_3d first-person view the shift keys turn the
+            // camera instead of panning the map.
+            if( get_active_world_renderer().handle_view_shift( shift_delta.at( act ).first ) ) {
+                break;
+            }
+#endif
             int soffset = get_option<int>( "MOVE_VIEW_OFFSET" );
             player_character.view_offset += g->is_tileset_isometric()
                                             ? shift_delta.at( act ).second * soffset
