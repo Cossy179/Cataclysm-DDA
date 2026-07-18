@@ -3975,6 +3975,83 @@ class block_3d_world_renderer : public world_renderer
                 }
             }
 
+            // Idle-frame reuse: hash the world/camera state that determines
+            // the frame. When it matches the previous frame and nothing is
+            // animating, re-present the already-built frame instead of
+            // rebuilding the scene — the common between-turns case costs
+            // near-zero CPU and no GPU geometry passes.
+            {
+                const auto mix = []( uint64_t h, const uint64_t v ) {
+                    return ( h ^ ( v + 0x9e3779b97f4a7c15ULL + ( h << 12 ) + ( h >> 4 ) ) ) *
+                           1099511628211ULL;
+                };
+                uint64_t key = 0xB10C;
+                key = mix( key, static_cast<uint64_t>( to_turn<int>( calendar::turn ) ) );
+                const tripoint_abs_ms c_abs = here.get_abs( center );
+                key = mix( key, static_cast<uint64_t>( c_abs.x() ) );
+                key = mix( key, static_cast<uint64_t>( c_abs.y() ) );
+                key = mix( key, static_cast<uint64_t>( c_abs.z() ) );
+                key = mix( key, static_cast<uint64_t>( last_av_pos_.x() ) );
+                key = mix( key, static_cast<uint64_t>( last_av_pos_.y() ) );
+                key = mix( key, static_cast<uint64_t>( scene.dest.x ) );
+                key = mix( key, static_cast<uint64_t>( scene.dest.y ) );
+                key = mix( key, static_cast<uint64_t>( scene.width ) );
+                key = mix( key, static_cast<uint64_t>( scene.height ) );
+                key = mix( key, static_cast<uint64_t>( uistate.tileset_zoom ) );
+                key = mix( key, ( anim_phase_ ? 1 : 0 ) | ( first_person_ ? 2 : 0 ) );
+                key = mix( key, static_cast<uint64_t>( std::llround( ease_x_ * 64.0 ) ) );
+                key = mix( key, static_cast<uint64_t>( std::llround( ease_y_ * 64.0 ) ) );
+                key = mix( key, static_cast<uint64_t>( std::llround( ease_heading_ * 256.0f ) ) );
+                key = mix( key, reinterpret_cast<uintptr_t>( renderer.get() ) );
+                if( frame_has_emissive_ ) {
+                    // Fire flicker keeps animating: rebuild on a ~7 Hz clock.
+                    key = mix( key, SDL_GetTicks() / 150 );
+                }
+                const bool busy = !SCT.vSCT.empty() ||
+                                  ( tilecontext && tilecontext->overlay_frame_pending() );
+                if( !busy && cache_mode_ != frame_cache::none && key == cache_key_ ) {
+                    const SDL_Rect viewport{ scene.dest.x, scene.dest.y,
+                                             scene.width, scene.height };
+                    bool presented = false;
+                    if( cache_mode_ == frame_cache::gpu ) {
+#if SDL_MAJOR_VERSION >= 3
+                        SDL_Texture *const cached =
+                            gpu_pass_.cached_texture( renderer, scene.width, scene.height );
+                        if( cached ) {
+                            const SDL_FRect srcr{ 0.0f, 0.0f,
+                                                  static_cast<float>( scene.width ),
+                                                  static_cast<float>( scene.height ) };
+                            const SDL_FRect dstr{ static_cast<float>( scene.dest.x ),
+                                                  static_cast<float>( scene.dest.y ),
+                                                  static_cast<float>( scene.width ),
+                                                  static_cast<float>( scene.height ) };
+                            presented = SDL_RenderTexture( renderer.get(), cached,
+                                                           &srcr, &dstr );
+                            if( presented ) {
+                                apply_scene_post( viewport );
+                            }
+                        }
+#endif
+                    } else if( cache_mode_ == frame_cache::fp ) {
+                        render_cpu_batch( viewport, false );
+                        draw_fp_compass( viewport );
+                        presented = true;
+                    } else {
+                        render_cpu_batch( viewport, true );
+#if SDL_MAJOR_VERSION >= 3
+                        apply_scene_post( viewport );
+#endif
+                        presented = true;
+                    }
+                    if( presented ) {
+                        emit_weather_overlay( viewport, here, you );
+                        return;
+                    }
+                }
+                cache_key_ = key;
+                cache_mode_ = frame_cache::none;
+            }
+
             if( first_person_ ) {
                 render_first_person( scene, here, you );
                 return;
@@ -4035,7 +4112,11 @@ class block_3d_world_renderer : public world_renderer
             for( auto &bucket : buckets_ ) {
                 bucket.clear();
             }
+            frame_has_emissive_ = false;
             const auto push = [&]( const draw_entry & e ) {
+                if( e.emissive || e.kind == entry_kind::glow ) {
+                    frame_has_emissive_ = true;
+                }
                 const size_t idx = static_cast<size_t>(
                                        render_3d::depth_key( e.dx, e.dy, e.dz ) - key_min );
                 if( idx < buckets_.size() ) {
@@ -4177,14 +4258,7 @@ class block_3d_world_renderer : public world_renderer
                     runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
                 }
 
-                geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
-                RenderSetClipRect( renderer, &viewport );
-                for( const tex_run &run : runs_ ) {
-                    if( run.count > 0 ) {
-                        RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
-                    }
-                }
-                RenderSetClipRect( renderer, nullptr );
+                render_cpu_batch( viewport, true );
             }
 
             emit_sct_overlay( cam, scene.dest, center, overlay_strings );
@@ -4193,9 +4267,24 @@ class block_3d_world_renderer : public world_renderer
             apply_scene_post( viewport );
 #endif
             emit_weather_overlay( viewport, here, you );
+            cache_mode_ = drew_gpu ? frame_cache::gpu : frame_cache::cpu;
         }
 
     private:
+        // Rasterize the current verts_/runs_ batch into the viewport —
+        // shared by the fresh-build paths and the idle-frame reuse path.
+        void render_cpu_batch( const SDL_Rect &viewport, const bool clear_bg ) {
+            if( clear_bg ) {
+                geometry->rect( renderer, viewport, SDL_Color{ 0, 0, 0, 255 } );
+            }
+            RenderSetClipRect( renderer, &viewport );
+            for( const tex_run &run : runs_ ) {
+                if( run.count > 0 ) {
+                    RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
+                }
+            }
+            RenderSetClipRect( renderer, nullptr );
+        }
         // Falling-precipitation overlay: screen-space rain streaks or
         // wobbling snowflakes animated on the wall clock, drawn over the
         // finished frame in both views. Skipped when the avatar is under a
@@ -5339,15 +5428,10 @@ class block_3d_world_renderer : public world_renderer
             if( !runs_.empty() ) {
                 runs_.back().count = static_cast<int>( verts_.size() ) - runs_.back().begin;
             }
-            RenderSetClipRect( renderer, &viewport );
-            for( const tex_run &run : runs_ ) {
-                if( run.count > 0 ) {
-                    RenderTriangles( renderer, run.tex, verts_.data() + run.begin, run.count );
-                }
-            }
-            RenderSetClipRect( renderer, nullptr );
+            render_cpu_batch( viewport, false );
             draw_fp_compass( viewport );
             emit_weather_overlay( viewport, here, you );
+            cache_mode_ = frame_cache::fp;
         }
 
         // A minimal compass ring at the top of the first-person view: eight
@@ -6374,6 +6458,15 @@ class block_3d_world_renderer : public world_renderer
         // Precipitation state for the falling-weather overlay.
         bool raining_ = false;
         bool snowing_ = false;
+        // Idle-frame cache: when the world and camera state hash matches the
+        // previous frame's and nothing is animating, the frame re-presents
+        // instead of rebuilding the scene — near-zero CPU between turns.
+        enum class frame_cache : uint8_t { none, cpu, gpu, fp };
+        frame_cache cache_mode_ = frame_cache::none;
+        uint64_t cache_key_ = 0;
+        // The last built frame contained emissive glow (fire): its flicker
+        // must keep animating, so the cache key gains a time bucket.
+        bool frame_has_emissive_ = false;
 };
 
 } // namespace

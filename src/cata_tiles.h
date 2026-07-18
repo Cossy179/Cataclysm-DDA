@@ -871,6 +871,18 @@ class cata_tiles
          */
         void take_overlay_frame( overlay_frame_snapshot &out );
 
+        /**
+         * True when overlay/animation state is queued that the next
+         * take_overlay_frame would deliver — the block_3d backend's
+         * idle-frame cache must rebuild rather than reuse while animations
+         * are pending.
+         */
+        bool overlay_frame_pending() const {
+            return !cursors.empty() || !highlights.empty() || do_draw_explosion ||
+                   do_draw_custom_explosion || do_draw_bullet || do_draw_hit ||
+                   do_draw_line || do_draw_zones || do_draw_async_anim;
+        }
+
         void init_draw_highlight( const tripoint_bub_ms &p );
         void draw_highlight();
         void void_highlight();

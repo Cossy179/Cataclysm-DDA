@@ -89,10 +89,15 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
             here.ter_set( c + tripoint( dx, dy, 1 ), ter_t_flat_roof );
         }
     }
-    // Second story on the west wall: first person should draw it two bricks
-    // tall instead of stretching one story.
-    for( int dy = 5; dy <= 10; dy++ ) {
-        here.ter_set( c + tripoint( 5, dy, 1 ), ter_t_brick_wall );
+    // Full second story: every wall cell rises another floor (and the roof
+    // moves up), so the building reads as a complete two-story house.
+    for( int dx = 5; dx <= 11; dx++ ) {
+        for( int dy = 5; dy <= 10; dy++ ) {
+            const bool edge = dx == 5 || dx == 11 || dy == 5 || dy == 10;
+            if( edge ) {
+                here.ter_set( c + tripoint( dx, dy, 1 ), ter_t_brick_wall );
+            }
+        }
     }
     here.ter_set( c + point( -6, -6 ), ter_t_tree );
     here.ter_set( c + point( -8, 4 ), ter_t_tree );

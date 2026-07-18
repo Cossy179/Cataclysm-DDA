@@ -14,6 +14,7 @@ void scene_gpu_pass::abandon_all()
     main_pipeline_ = nullptr;
     shadow_pipeline_ = nullptr;
     ssao_pipeline_ = nullptr;
+    bloom_down_pipeline_ = nullptr;
     bloom_pipeline_ = nullptr;
     atlas_sampler_ = nullptr;
     shadow_sampler_ = nullptr;
@@ -23,6 +24,7 @@ void scene_gpu_pass::abandon_all()
     scene_depth_ = nullptr;
     depth_linear_ = nullptr;
     emissive_ = nullptr;
+    bloom_half_ = nullptr;
     scene_tex_ = nullptr;
     scene_gpu_ = nullptr;
     white_gpu_ = nullptr;
@@ -50,6 +52,9 @@ void scene_gpu_pass::release_and_disable()
         if( ssao_pipeline_ ) {
             SDL_ReleaseGPUGraphicsPipeline( device_, ssao_pipeline_ );
         }
+        if( bloom_down_pipeline_ ) {
+            SDL_ReleaseGPUGraphicsPipeline( device_, bloom_down_pipeline_ );
+        }
         if( bloom_pipeline_ ) {
             SDL_ReleaseGPUGraphicsPipeline( device_, bloom_pipeline_ );
         }
@@ -76,6 +81,9 @@ void scene_gpu_pass::release_and_disable()
         }
         if( emissive_ ) {
             SDL_ReleaseGPUTexture( device_, emissive_ );
+        }
+        if( bloom_half_ ) {
+            SDL_ReleaseGPUTexture( device_, bloom_half_ );
         }
         if( main_vbuf_ ) {
             SDL_ReleaseGPUBuffer( device_, main_vbuf_ );
@@ -133,12 +141,15 @@ bool scene_gpu_pass::ensure_device_objects()
                                       device_, "scene_ssao.vert", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0 );
     cata_shader::shader ssao_fs = cata_shader::shader::load_stage(
                                       device_, "scene_ssao.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0 );
-    // The bloom pass reuses the SSAO fullscreen-triangle vertex stage.
+    // The bloom passes reuse the SSAO fullscreen-triangle vertex stage.
+    cata_shader::shader bloom_down_fs = cata_shader::shader::load_stage(
+                                            device_, "scene_bloom_down.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0 );
     cata_shader::shader bloom_fs = cata_shader::shader::load_stage(
                                        device_, "scene_bloom.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0 );
     if( !main_vs.is_valid() || !main_fs.is_valid() ||
         !shadow_vs.is_valid() || !shadow_fs.is_valid() ||
-        !ssao_vs.is_valid() || !ssao_fs.is_valid() || !bloom_fs.is_valid() ) {
+        !ssao_vs.is_valid() || !ssao_fs.is_valid() || !bloom_down_fs.is_valid() ||
+        !bloom_fs.is_valid() ) {
         DebugLog( D_ERROR, DC_ALL )
                 << "scene_gpu_pass: shader artifacts unavailable; GPU scene pass disabled";
         return false;
@@ -226,9 +237,23 @@ bool scene_gpu_pass::ensure_device_objects()
         info.target_info.num_color_targets = 1;
         ssao_pipeline_ = SDL_CreateGPUGraphicsPipeline( device_, &info );
     }
-    // Bloom pipeline: fullscreen (no vertex input), additive blend onto the
-    // scene color.
+    // Bloom downsample pipeline: fullscreen into the half-res glow target,
+    // replacing its contents (no blend).
     if( ssao_pipeline_ ) {
+        SDL_GPUColorTargetDescription color{};
+        color.format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo info{};
+        info.vertex_shader = ssao_vs.get();
+        info.fragment_shader = bloom_down_fs.get();
+        info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.target_info.color_target_descriptions = &color;
+        info.target_info.num_color_targets = 1;
+        bloom_down_pipeline_ = SDL_CreateGPUGraphicsPipeline( device_, &info );
+    }
+    // Bloom composite pipeline: fullscreen (no vertex input), additive blend
+    // onto the scene color.
+    if( bloom_down_pipeline_ ) {
         SDL_GPUColorTargetDescription color{};
         color.format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
         color.blend_state.enable_blend = true;
@@ -322,7 +347,8 @@ bool scene_gpu_pass::ensure_device_objects()
         shadow_depth_ = SDL_CreateGPUTexture( device_, &tinfo );
     }
 
-    if( !main_pipeline_ || !shadow_pipeline_ || !ssao_pipeline_ || !bloom_pipeline_ ||
+    if( !main_pipeline_ || !shadow_pipeline_ || !ssao_pipeline_ ||
+        !bloom_down_pipeline_ || !bloom_pipeline_ ||
         !atlas_sampler_ || !shadow_sampler_ || !linear_sampler_ ||
         !shadow_map_ || !shadow_depth_ ) {
         DebugLog( D_ERROR, DC_ALL )
@@ -403,6 +429,10 @@ bool scene_gpu_pass::ensure_scene_target( const SDL_Renderer_Ptr &renderer,
         SDL_ReleaseGPUTexture( device_, emissive_ );
         emissive_ = nullptr;
     }
+    if( bloom_half_ ) {
+        SDL_ReleaseGPUTexture( device_, bloom_half_ );
+        bloom_half_ = nullptr;
+    }
     scene_tex_ = SDL_CreateTexture( renderer.get(), SDL_PIXELFORMAT_ARGB8888,
                                     SDL_TEXTUREACCESS_TARGET, w, h );
     if( scene_tex_ ) {
@@ -424,10 +454,14 @@ bool scene_gpu_pass::ensure_scene_target( const SDL_Renderer_Ptr &renderer,
     dinfo.format = SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
     dinfo.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     depth_linear_ = SDL_CreateGPUTexture( device_, &dinfo );
-    // Emissive mask sampled by the bloom pass.
+    // Emissive mask sampled by the bloom downsample pass.
     dinfo.format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
     emissive_ = SDL_CreateGPUTexture( device_, &dinfo );
-    if( !scene_gpu_ || !scene_depth_ || !depth_linear_ || !emissive_ ) {
+    // Half-res pre-blurred glow, sampled by the bloom composite pass.
+    dinfo.width = static_cast<Uint32>( ( w + 1 ) / 2 );
+    dinfo.height = static_cast<Uint32>( ( h + 1 ) / 2 );
+    bloom_half_ = SDL_CreateGPUTexture( device_, &dinfo );
+    if( !scene_gpu_ || !scene_depth_ || !depth_linear_ || !emissive_ || !bloom_half_ ) {
         return false;
     }
     scene_w_ = w;
@@ -639,8 +673,29 @@ SDL_Texture *scene_gpu_pass::render( const SDL_Renderer_Ptr &renderer,
         }
     }
 
-    // Bloom: a fullscreen pass blurs the emissive mask and adds the glow
-    // onto the scene color.
+    // Bloom, two passes: downsample the emissive mask into the half-res
+    // glow target with a small pre-blur, then blur that and add the glow
+    // onto the scene color — the half-res source doubles the reach of the
+    // composite rings in scene pixels.
+    if( ok && bloom_wanted ) {
+        SDL_GPUColorTargetInfo half{};
+        half.texture = bloom_half_;
+        half.load_op = SDL_GPU_LOADOP_CLEAR;
+        half.clear_color = SDL_FColor{ 0.0f, 0.0f, 0.0f, 1.0f };
+        half.store_op = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass *down = SDL_BeginGPURenderPass( cmd, &half, 1, nullptr );
+        if( down ) {
+            SDL_BindGPUGraphicsPipeline( down, bloom_down_pipeline_ );
+            SDL_GPUTextureSamplerBinding sampler{};
+            sampler.texture = emissive_;
+            sampler.sampler = linear_sampler_;
+            SDL_BindGPUFragmentSamplers( down, 0, &sampler, 1 );
+            SDL_DrawGPUPrimitives( down, 3, 1, 0, 0 );
+            SDL_EndGPURenderPass( down );
+        } else {
+            ok = false;
+        }
+    }
     if( ok && bloom_wanted ) {
         SDL_GPUColorTargetInfo color{};
         color.texture = scene_gpu_;
@@ -650,7 +705,7 @@ SDL_Texture *scene_gpu_pass::render( const SDL_Renderer_Ptr &renderer,
         if( pass ) {
             SDL_BindGPUGraphicsPipeline( pass, bloom_pipeline_ );
             SDL_GPUTextureSamplerBinding sampler{};
-            sampler.texture = emissive_;
+            sampler.texture = bloom_half_;
             sampler.sampler = linear_sampler_;
             SDL_BindGPUFragmentSamplers( pass, 0, &sampler, 1 );
             SDL_DrawGPUPrimitives( pass, 3, 1, 0, 0 );
@@ -664,6 +719,19 @@ SDL_Texture *scene_gpu_pass::render( const SDL_Renderer_Ptr &renderer,
         DebugLog( D_ERROR, DC_ALL )
                 << "scene_gpu_pass: frame failed: " << SDL_GetError();
         release_and_disable();
+        return nullptr;
+    }
+    return scene_tex_;
+}
+
+SDL_Texture *scene_gpu_pass::cached_texture( const SDL_Renderer_Ptr &renderer,
+        const int w, const int h ) const
+{
+    if( disabled_ || !renderer || !scene_tex_ || scene_w_ != w || scene_h_ != h ) {
+        return nullptr;
+    }
+    SDL_GPUDevice *const device = SDL_GetGPURendererDevice( renderer.get() );
+    if( !device || device != device_ ) {
         return nullptr;
     }
     return scene_tex_;

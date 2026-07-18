@@ -77,6 +77,13 @@ class scene_gpu_pass
                              const std::vector<float> &shadow_verts,
                              bool shadow_pass_wanted, bool ssao_wanted, bool bloom_wanted );
 
+        /**
+         * The scene texture from the most recent successful render(), still
+         * sized (w, h) on the current renderer, or null. Lets the caller
+         * re-composite an unchanged frame without re-running the passes.
+         */
+        SDL_Texture *cached_texture( const SDL_Renderer_Ptr &renderer, int w, int h ) const;
+
     private:
         bool ensure_device_objects();
         bool ensure_scene_target( const SDL_Renderer_Ptr &renderer, int w, int h );
@@ -95,6 +102,7 @@ class scene_gpu_pass
         SDL_GPUGraphicsPipeline *main_pipeline_ = nullptr;
         SDL_GPUGraphicsPipeline *shadow_pipeline_ = nullptr;
         SDL_GPUGraphicsPipeline *ssao_pipeline_ = nullptr;
+        SDL_GPUGraphicsPipeline *bloom_down_pipeline_ = nullptr;
         SDL_GPUGraphicsPipeline *bloom_pipeline_ = nullptr;
         SDL_GPUSampler *atlas_sampler_ = nullptr;
         SDL_GPUSampler *shadow_sampler_ = nullptr;
@@ -104,6 +112,7 @@ class scene_gpu_pass
         SDL_GPUTexture *scene_depth_ = nullptr;
         SDL_GPUTexture *depth_linear_ = nullptr; // R32F view depth, AO source
         SDL_GPUTexture *emissive_ = nullptr;     // BGRA emissive mask, bloom source
+        SDL_GPUTexture *bloom_half_ = nullptr;   // half-res pre-blurred glow
         SDL_Texture *scene_tex_ = nullptr;
         SDL_GPUTexture *scene_gpu_ = nullptr; // unwrapped from scene_tex_, not owned
         SDL_GPUTexture *white_gpu_ = nullptr; // owned pure-GPU 1x1 white
