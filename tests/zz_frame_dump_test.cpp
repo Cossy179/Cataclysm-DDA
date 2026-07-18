@@ -38,6 +38,7 @@ static const ter_str_id ter_t_floor( "t_floor" );
 static const ter_str_id ter_t_tree( "t_tree" );
 static const ter_str_id ter_t_pavement( "t_pavement" );
 static const ter_str_id ter_t_door_c( "t_door_c" );
+static const ter_str_id ter_t_flat_roof( "t_flat_roof" );
 static const furn_str_id furn_f_counter( "f_counter" );
 static const mtype_id mon_zombie_dump( "mon_zombie" );
 
@@ -84,6 +85,8 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
             } else {
                 here.ter_set( c + point( dx, dy ), ter_t_floor );
             }
+            // Roof above, so the interior has a ceiling in first person.
+            here.ter_set( c + tripoint( dx, dy, 1 ), ter_t_flat_roof );
         }
     }
     here.ter_set( c + point( -6, -6 ), ter_t_tree );
@@ -151,6 +154,19 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
         SDL_Delay( 20 );
     }
     save_frame( "block3d_fp.bmp" );
+
+    // Indoors: stand inside the building looking at the far wall — the
+    // dump should show a ceiling, not sky.
+    you.setpos( here, c + tripoint{ 7, 8, 0 } );
+    here.build_map_cache( 0 );
+    here.invalidate_visibility_cache();
+    here.update_visibility_cache( 0 );
+    const render_scene in_scene{ point::zero, you.pos_bub(), vw, vh };
+    for( int i = 0; i < 30; i++ ) {
+        wr.draw_world( in_scene, overlay_strings, color_blocks );
+        SDL_Delay( 20 );
+    }
+    save_frame( "block3d_fp_indoor.bmp" );
     REQUIRE( wr.handle_zoom_out() );
 
     SDL_SetRenderTarget( get_sdl_renderer().get(), prev_target );

@@ -456,7 +456,7 @@ import random
 
 TER_CELL = 32
 TER_COLS = 8
-TER_ROWS = 3
+TER_ROWS = 4
 TERRAIN_LAYOUT = [
     "grass", "tall_grass", "dirt", "sand", "gravel", "pavement", "sidewalk",
     "concrete",
@@ -464,6 +464,8 @@ TERRAIN_LAYOUT = [
     "rock", "mud",
     "tree", "shrub", "underbrush", "door", "window", "dirt_side", "wood_side",
     "metal",
+    "water2", "deep_water2", "rubble", "fungal", "ice", "snow", "tile_floor",
+    "rock_floor",
 ]
 
 
@@ -694,6 +696,63 @@ def t_metal(d, rng):
     d.line((0, 15, 31, 15), fill=(104, 110, 118, 255))
 
 
+def t_rubble(d, rng):
+    speckle(d, rng, (112, 106, 100, 255),
+            [(128, 122, 116, 255), (96, 90, 86, 255), (140, 100, 80, 255)],
+            n=160)
+    for _ in range(9):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        w = rng.randrange(3, 7)
+        d.rectangle((x, y, x + w, y + w // 2), fill=rng.choice(
+            [(130, 124, 118, 255), (150, 82, 64, 255), (100, 96, 92, 255)]),
+            outline=(70, 66, 62, 255))
+
+
+def t_fungal(d, rng):
+    speckle(d, rng, (176, 160, 176, 255),
+            [(196, 178, 196, 255), (156, 140, 158, 255)], n=150)
+    for _ in range(8):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        r = rng.randrange(2, 4)
+        d.ellipse((x - r, y - r, x + r, y + r), fill=(210, 190, 210, 255),
+                  outline=(140, 110, 140, 255))
+
+
+def t_ice(d, rng):
+    speckle(d, rng, (188, 216, 232, 255),
+            [(200, 226, 240, 255), (176, 206, 224, 255)], n=90)
+    for _ in range(5):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x + rng.randrange(4, 10), y + rng.randrange(2, 6)),
+               fill=(226, 240, 248, 255))
+
+
+def t_snow(d, rng):
+    speckle(d, rng, (232, 236, 242, 255),
+            [(242, 245, 250, 255), (220, 226, 234, 255)], n=110)
+
+
+def t_tile_floor(d, rng):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=(206, 204, 198, 255))
+    for x in range(0, TER_CELL, 8):
+        d.line((x, 0, x, TER_CELL - 1), fill=(170, 168, 162, 255))
+    for y in range(0, TER_CELL, 8):
+        d.line((0, y, TER_CELL - 1, y), fill=(170, 168, 162, 255))
+
+
+def t_rock_floor(d, rng):
+    speckle(d, rng, (134, 130, 128, 255),
+            [(146, 142, 140, 255), (120, 116, 114, 255)], n=140)
+    for _ in range(4):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.line((x, y, x + rng.randrange(3, 8), y + rng.randrange(-2, 3)),
+               fill=(104, 100, 98, 255))
+
+
 TERRAIN_DRAW = {
     "grass": t_grass, "tall_grass": t_tall_grass, "dirt": t_dirt,
     "sand": t_sand, "gravel": t_gravel, "pavement": t_pavement,
@@ -704,6 +763,11 @@ TERRAIN_DRAW = {
     "tree": t_tree, "shrub": t_shrub, "underbrush": t_underbrush,
     "door": t_door, "window": t_window, "dirt_side": t_dirt_side,
     "wood_side": t_wood_side, "metal": t_metal,
+    # Second animation frames reuse the water painters with a different
+    # rng seed (keyed by name), giving shifted wave placement.
+    "water2": t_water, "deep_water2": t_deep_water,
+    "rubble": t_rubble, "fungal": t_fungal, "ice": t_ice, "snow": t_snow,
+    "tile_floor": t_tile_floor, "rock_floor": t_rock_floor,
 }
 
 

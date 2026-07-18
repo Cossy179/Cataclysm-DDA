@@ -3799,8 +3799,43 @@ class block_3d_world_renderer : public world_renderer
                                     const point &win_size,
                                     const point_bub_ms &center ) const override {
             if( first_person_ ) {
-                // No grid inverse in first person; pick the avatar's cell.
-                return center;
+                // Cast the clicked pixel's ray into the world: the floor
+                // point at that screen height, cut short by the first
+                // sight-blocking wall along the way.
+                map &here = get_map();
+                const float vw = std::max( win_size.x, 1 );
+                const float vh = std::max( win_size.y, 1 );
+                const float tan_half_fov = 0.66f;
+                const float dirx = std::cos( heading_ );
+                const float diry = std::sin( heading_ );
+                const float cxn = 2.0f * screen_pos.x / vw - 1.0f;
+                const float rdx = dirx + ( -diry * tan_half_fov ) * cxn;
+                const float rdy = diry + ( dirx * tan_half_fov ) * cxn;
+                const float ex = center.x() + 0.5f;
+                const float ey = center.y() + 0.5f;
+                // Ground-plane distance for the clicked row (below horizon).
+                float d_pick = 24.0f;
+                const float dy_px = screen_pos.y - vh / 2.0f;
+                if( dy_px > 1.0f ) {
+                    d_pick = std::min( d_pick, ( 0.55f - 0.125f ) * vh / dy_px );
+                }
+                // Walk the ray; stop at the first opaque wall.
+                float t = 0.0f;
+                while( t < d_pick ) {
+                    t += 0.25f;
+                    const point_bub_ms cell( static_cast<int>( std::floor( ex + rdx * t ) ),
+                                             static_cast<int>( std::floor( ey + rdy * t ) ) );
+                    const tripoint_bub_ms p3( cell, get_avatar().posz() );
+                    if( !here.inbounds( p3 ) ) {
+                        break;
+                    }
+                    if( here.impassable( p3 ) && !here.is_transparent( p3 ) ) {
+                        return cell;
+                    }
+                }
+                const float d = std::max( t - 0.25f, 0.0f );
+                return point_bub_ms( static_cast<int>( std::floor( ex + rdx * d ) ),
+                                     static_cast<int>( std::floor( ey + rdy * d ) ) );
             }
             // Invert this backend's own projection on the ground plane
             // (slab tops at 0.125 blocks), matching what the eye sees.
@@ -3902,6 +3937,7 @@ class block_3d_world_renderer : public world_renderer
             // of snapping cell to cell. Teleports and z-changes snap.
             {
                 const uint32_t now = SDL_GetTicks();
+                anim_phase_ = ( now / 600 ) % 2 == 1;
                 const float dt = ease_valid_
                                  ? std::min<uint32_t>( now - ease_last_ms_, 300 ) / 1000.0f
                                  : 1.0f;
@@ -4181,10 +4217,25 @@ class block_3d_world_renderer : public world_renderer
             grass = 0, tall_grass, dirt, sand, gravel, pavement, sidewalk, concrete,
             floor_wood, wall_brick, wall_concrete, roof, water, deep_water, rock, mud,
             tree, shrub, underbrush, door, window, dirt_side, wood_side, metal,
+            water2, deep_water2, rubble, fungal, ice, snow, tile_floor, rock_floor,
             none = -1
         };
         static constexpr int ter_tex_cols = 8;
-        static constexpr int ter_tex_rows = 3;
+        static constexpr int ter_tex_rows = 4;
+
+        // Two-frame water animation: swap the water cells on a timer.
+        ter_tex animated_tex( const ter_tex t ) const {
+            if( !anim_phase_ ) {
+                return t;
+            }
+            if( t == ter_tex::water ) {
+                return ter_tex::water2;
+            }
+            if( t == ter_tex::deep_water ) {
+                return ter_tex::deep_water2;
+            }
+            return t;
+        }
 
         struct draw_entry {
             int dx = 0;
@@ -4407,16 +4458,21 @@ class block_3d_world_renderer : public world_renderer
                         render_3d::rgba fld_color;
                         if( emissive ) {
                             fld_color = to_rgba( curses_color_to_SDL( fe->color() ) );
-                            // Layered soft bloom: three concentric halos.
+                            // Layered soft bloom: three concentric halos,
+                            // flickering on the wall clock (phase-offset per
+                            // cell so neighbouring fires don't pulse in sync).
+                            const float flick = 0.82f + 0.18f * std::sin(
+                                                    SDL_GetTicks() * 0.02f +
+                                                    static_cast<float>( p.x() * 7 + p.y() * 13 ) );
                             render_3d::rgba halo = fld_color;
-                            halo.a = 90;
-                            push( draw_entry{ dx, dy, dz, fld_top, 1.3f, halo,
+                            halo.a = static_cast<uint8_t>( 90 * flick );
+                            push( draw_entry{ dx, dy, dz, fld_top, 1.3f * flick, halo,
                                               entry_kind::glow } );
-                            halo.a = 50;
-                            push( draw_entry{ dx, dy, dz, fld_top, 2.1f, halo,
+                            halo.a = static_cast<uint8_t>( 50 * flick );
+                            push( draw_entry{ dx, dy, dz, fld_top, 2.1f * flick, halo,
                                               entry_kind::glow } );
-                            halo.a = 26;
-                            push( draw_entry{ dx, dy, dz, fld_top, 3.0f, halo,
+                            halo.a = static_cast<uint8_t>( 26 * flick );
+                            push( draw_entry{ dx, dy, dz, fld_top, 3.0f * flick, halo,
                                               entry_kind::glow } );
                         } else {
                             fld_color = tile_color( fe->color() );
@@ -4736,64 +4792,96 @@ class block_3d_world_renderer : public world_renderer
             ensure_entity_atlas();
             if( terrain_atlas_ ) {
                 begin_run( terrain_atlas_.get() );
+                const auto push_plane = [&]( const float sx[4], const float sd[4],
+                                             const float wz, const render_3d::rgba & tint,
+                const render_3d::sprite_uv & uv ) {
+                    float sy[4];
+                    for( int k = 0; k < 4; k++ ) {
+                        sy[k] = vh / 2.0f + ( eye_h - wz ) * ( vh / sd[k] );
+                    }
+                    verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
+                    verts_.push_back( render_3d::vtx{ ox + sx[1], oy + sy[1], tint, uv.u1, uv.v0, 0.0f } );
+                    verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
+                    verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
+                    verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
+                    verts_.push_back( render_3d::vtx{ ox + sx[3], oy + sy[3], tint, uv.u0, uv.v1, 0.0f } );
+                };
                 for( int fdy = -24; fdy <= 24; fdy++ ) {
                     for( int fdx = -24; fdx <= 24; fdx++ ) {
                         const tripoint_bub_ms p = eye_pos + tripoint( fdx, fdy, 0 );
-                        if( !here.inbounds( p ) || here.impassable( p ) ||
-                            here.is_open_air( p ) ) {
+                        if( !here.inbounds( p ) ) {
                             continue;
                         }
                         if( here.get_visibility( vis_cache[p.x()][p.y()], vis_vars ) ==
                             visibility_type::HIDDEN ) {
                             continue;
                         }
-                        const std::pair<ter_tex, ter_tex> cells =
-                            terrain_cells( here.ter( p ).id().str() );
-                        if( cells.first == ter_tex::none ) {
-                            continue;
-                        }
                         const float wx0 = static_cast<float>( p.x() );
                         const float wy0 = static_cast<float>( p.y() );
+                        // Corners that dip behind the near plane are clamped
+                        // (not culled) so close floor/ceiling cells still
+                        // cover the screen edges instead of leaving wedges of
+                        // backdrop or sky; only fully-behind cells skip.
                         float sx[4];
                         float sd[4];
-                        cam_point( wx0, wy0, sx[0], sd[0] );
-                        cam_point( wx0 + 1.0f, wy0, sx[1], sd[1] );
-                        cam_point( wx0 + 1.0f, wy0 + 1.0f, sx[2], sd[2] );
-                        cam_point( wx0, wy0 + 1.0f, sx[3], sd[3] );
-                        bool ok = true;
+                        int behind = 0;
+                        const float cwx[4] = { wx0, wx0 + 1.0f, wx0 + 1.0f, wx0 };
+                        const float cwy[4] = { wy0, wy0, wy0 + 1.0f, wy0 + 1.0f };
                         bool in_view = false;
                         for( int k = 0; k < 4; k++ ) {
-                            if( sd[k] < 0.12f ) {
-                                ok = false;
-                                break;
+                            float raw_sx;
+                            float raw_d;
+                            cam_point( cwx[k], cwy[k], raw_sx, raw_d );
+                            if( raw_d < 0.12f ) {
+                                behind++;
+                                const float relx = cwx[k] - ex;
+                                const float rely = cwy[k] - ey;
+                                const float tx = invdet * ( diry * relx - dirx * rely );
+                                sd[k] = 0.12f;
+                                sx[k] = ( vw / 2.0f ) * ( 1.0f + tx / 0.12f );
+                            } else {
+                                sd[k] = raw_d;
+                                sx[k] = raw_sx;
                             }
                             if( sx[k] > -vw * 0.5f && sx[k] < vw * 1.5f ) {
                                 in_view = true;
                             }
                         }
-                        if( !ok || !in_view ) {
+                        if( behind == 4 || !in_view ) {
                             continue;
-                        }
-                        float sy[4];
-                        for( int k = 0; k < 4; k++ ) {
-                            sy[k] = vh / 2.0f + ( eye_h - 0.125f ) * ( vh / sd[k] );
                         }
                         const float center_d = ( sd[0] + sd[2] ) / 2.0f;
                         const float att = std::clamp( 1.8f / ( 1.8f + 0.12f * center_d ),
                                                       0.25f, 1.0f );
                         const float light = render_3d::light_factor(
                                                 here.ambient_light_at( p ) );
-                        const render_3d::rgba tint = render_3d::grade(
-                                                         render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
-                                                                 light * att ), env_ );
-                        render_3d::sprite_uv uv;
-                        terrain_uv( cells.first, uv );
-                        verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
-                        verts_.push_back( render_3d::vtx{ ox + sx[1], oy + sy[1], tint, uv.u1, uv.v0, 0.0f } );
-                        verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
-                        verts_.push_back( render_3d::vtx{ ox + sx[0], oy + sy[0], tint, uv.u0, uv.v0, 0.0f } );
-                        verts_.push_back( render_3d::vtx{ ox + sx[2], oy + sy[2], tint, uv.u1, uv.v1, 0.0f } );
-                        verts_.push_back( render_3d::vtx{ ox + sx[3], oy + sy[3], tint, uv.u0, uv.v1, 0.0f } );
+                        // Floor plane for walkable ground.
+                        if( !here.impassable( p ) && !here.is_open_air( p ) ) {
+                            const std::pair<ter_tex, ter_tex> cells =
+                                terrain_cells( here.ter( p ).id().str() );
+                            if( cells.first != ter_tex::none ) {
+                                const render_3d::rgba tint = render_3d::grade(
+                                                                 render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                                         light * att ), env_ );
+                                render_3d::sprite_uv uv;
+                                terrain_uv( animated_tex( cells.first ), uv );
+                                push_plane( sx, sd, 0.125f, tint, uv );
+                            }
+                        }
+                        // Ceiling: any cell with a floor above (including
+                        // wall cells, whose roof underside seals the top of
+                        // the wall) gets a dark overhead plane, so interiors
+                        // and the underground stop showing sky.
+                        const tripoint_bub_ms above = p + tripoint( 0, 0, 1 );
+                        if( pz < OVERMAP_HEIGHT && here.inbounds( above ) &&
+                            !here.has_flag( ter_furn_flag::TFLAG_NO_FLOOR, above ) ) {
+                            const render_3d::rgba ctint = render_3d::grade(
+                                                              render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                                      light * att * 0.45f ), env_ );
+                            render_3d::sprite_uv cuv;
+                            terrain_uv( pz < 0 ? ter_tex::rock : ter_tex::concrete, cuv );
+                            push_plane( sx, sd, 1.0f, ctint, cuv );
+                        }
                     }
                 }
             }
@@ -4852,7 +4940,7 @@ class block_3d_world_renderer : public world_renderer
                 hit_style( h, cells, fallback );
                 if( cells.second != ter_tex::none && terrain_atlas_ ) {
                     render_3d::sprite_uv uv;
-                    terrain_uv( cells.second, uv );
+                    terrain_uv( animated_tex( cells.second ), uv );
                     const float half_texel = 0.5f / terrain_atlas_w_;
                     float ua = std::clamp( uv.u0 + wx0 * ( uv.u1 - uv.u0 ),
                                            uv.u0 + half_texel, uv.u1 - half_texel );
@@ -5729,6 +5817,18 @@ class block_3d_world_renderer : public world_renderer
                 r = { ter_tex::wall_concrete, ter_tex::window };
             } else if( has( "door" ) ) {
                 r = { ter_tex::floor_wood, ter_tex::door };
+            } else if( has( "rubble" ) || has( "wreckage" ) ) {
+                r = { ter_tex::rubble, ter_tex::rubble };
+            } else if( has( "fungal" ) || has( "fungus" ) || has( "marloss" ) ) {
+                r = { ter_tex::fungal, ter_tex::fungal };
+            } else if( has( "ice" ) ) {
+                r = { ter_tex::ice, ter_tex::ice };
+            } else if( has( "snow" ) ) {
+                r = { ter_tex::snow, ter_tex::dirt_side };
+            } else if( has( "rock_floor" ) ) {
+                r = { ter_tex::rock_floor, ter_tex::rock };
+            } else if( has( "linoleum" ) || has( "tile" ) ) {
+                r = { ter_tex::tile_floor, ter_tex::wall_concrete };
             } else if( has( "brick" ) ) {
                 r = { ter_tex::concrete, ter_tex::wall_brick };
             } else if( has( "wall" ) ) {
@@ -5769,7 +5869,7 @@ class block_3d_world_renderer : public world_renderer
                 r = { ter_tex::roof, ter_tex::wall_concrete };
             } else if( has( "metal" ) || has( "steel" ) ) {
                 r = { ter_tex::metal, ter_tex::metal };
-            } else if( has( "floor" ) || has( "linoleum" ) || has( "carpet" ) ) {
+            } else if( has( "floor" ) || has( "carpet" ) ) {
                 r = { ter_tex::floor_wood, ter_tex::wood_side };
             } else if( has( "wood" ) || has( "counter" ) || has( "table" ) || has( "desk" ) ||
                        has( "cabinet" ) || has( "bookcase" ) || has( "bench" ) || has( "chair" ) ||
@@ -5792,8 +5892,8 @@ class block_3d_world_renderer : public world_renderer
                 return false;
             }
             e.tex = terrain_atlas_.get();
-            terrain_uv( cells.first, e.uv );
-            terrain_uv( cells.second, e.side_uv );
+            terrain_uv( animated_tex( cells.first ), e.uv );
+            terrain_uv( animated_tex( cells.second ), e.side_uv );
             e.side_textured = true;
             e.aspect = 1.0f;
             return true;
@@ -6082,6 +6182,9 @@ class block_3d_world_renderer : public world_renderer
         double ease_y_ = 0.0;
         int ease_z_ = 0;
         float ease_heading_ = 0.0f;
+        // Two-frame texture animation phase, advanced per frame from the
+        // wall clock (water ripple, and anything else that gains frames).
+        bool anim_phase_ = false;
 };
 
 } // namespace

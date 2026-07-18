@@ -125,9 +125,9 @@ TEST_CASE( "block_3d_entity_atlas_present", "[tiles][render_3d]" )
     REQUIRE_NOTHROW( terrain = load_image_mem( block3d_terrain_png,
                                block3d_terrain_png_len ) );
     REQUIRE( terrain );
-    // 8x3 grid of 32px cells.
+    // 8x4 grid of 32px cells.
     CHECK( terrain->w == 256 );
-    CHECK( terrain->h == 96 );
+    CHECK( terrain->h == 128 );
 }
 
 // The character- and item-sprite paths: the avatar (with worn gear) and a
@@ -240,10 +240,13 @@ TEST_CASE( "block_3d_first_person_smoke", "[tiles][render_3d]" )
     // The daytime sky alone guarantees a mostly-lit frame.
     CHECK( lit_pixels > view_size * view_size / 4 );
 
-    // Picking in first person resolves to the avatar's cell.
-    CHECK( wr.screen_to_map( point( 10, 10 ), point( 32, 32 ),
-                             point( view_size, view_size ),
-                             you.pos_bub().xy() ) == point_bub_ms( you.pos_bub().xy() ) );
+    // Picking in first person ray-casts into the world: the result is a
+    // sane nearby cell (within the 24-cell pick range of the avatar).
+    const point_bub_ms picked = wr.screen_to_map( point( 10, 10 ), point( 32, 32 ),
+                                point( view_size, view_size ),
+                                you.pos_bub().xy() );
+    CHECK( std::abs( picked.x() - you.pos_bub().x() ) <= 25 );
+    CHECK( std::abs( picked.y() - you.pos_bub().y() ) <= 25 );
 
     // Zoom out leaves first person and consumes the step; the next one
     // falls through to the normal zoom path.
