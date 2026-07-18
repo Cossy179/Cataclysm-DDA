@@ -5015,8 +5015,6 @@ class block_3d_world_renderer : public world_renderer
                         ua = std::max( uv.u0 + half_texel, ua - half_texel );
                         ub = std::min( uv.u1 - half_texel, ub + half_texel );
                     }
-                    const float vtop = uv.v0;
-                    const float vbot = uv.v0 + ( uv.v1 - uv.v0 ) * std::min( h.top_z, 1.0f );
                     const render_3d::rgba ta = render_3d::grade(
                                                    render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
                                                            light * att0 * face ), env_ );
@@ -5024,12 +5022,23 @@ class block_3d_world_renderer : public world_renderer
                                                    render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
                                                            light * att1 * face ), env_ );
                     begin_run( terrain_atlas_.get() );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y0a, ta, ua, vtop, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y0b, tb, ub, vtop, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y1b, tb, ub, vbot, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y0a, ta, ua, vtop, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y1b, tb, ub, vbot, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y1a, ta, ua, vbot, 0.0f } );
+                    // Stack unit-height segments so multi-story walls repeat
+                    // the texture instead of stretching it.
+                    for( float z_lo = 0.0f; z_lo < h.top_z; z_lo += 1.0f ) {
+                        const float z_hi = std::min( z_lo + 1.0f, h.top_z );
+                        const float sy0a = vh / 2.0f + ( eye_h - z_hi ) * ppu0;
+                        const float sy1a = vh / 2.0f + ( eye_h - z_lo ) * ppu0;
+                        const float sy0b = vh / 2.0f + ( eye_h - z_hi ) * ppu1;
+                        const float sy1b = vh / 2.0f + ( eye_h - z_lo ) * ppu1;
+                        const float vtop = uv.v0;
+                        const float vbot = uv.v0 + ( uv.v1 - uv.v0 ) * ( z_hi - z_lo );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ta, ua, vtop, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy0b, tb, ub, vtop, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, tb, ub, vbot, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ta, ua, vtop, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, tb, ub, vbot, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy1a, ta, ua, vbot, 0.0f } );
+                    }
                 } else {
                     const render_3d::rgba ca_c = render_3d::grade(
                                                      render_3d::shade( fallback, light * att0 * face ), env_ );
@@ -5119,7 +5128,18 @@ class block_3d_world_renderer : public world_renderer
                         h.use_furn = has_f;
                         h.is_veh = false;
                         if( opaque ) {
+                            // Multi-story walls: while the stacked cells
+                            // above are also solid, the face extends upward
+                            // (capped at three stories of visual height).
                             h.top_z = 1.0f;
+                            for( int up = 1; up <= 2; up++ ) {
+                                const tripoint_bub_ms pu = p + tripoint( 0, 0, up );
+                                if( p.z() + up > OVERMAP_HEIGHT || !here.inbounds( pu ) ||
+                                    !here.impassable( pu ) || here.is_transparent( pu ) ) {
+                                    break;
+                                }
+                                h.top_z += 1.0f;
+                            }
                         } else if( has_f ) {
                             // Furniture: counters and fences read waist-high,
                             // decorations knee-high; the ray sees over both.
