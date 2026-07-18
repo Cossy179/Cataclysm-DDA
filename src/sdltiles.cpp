@@ -5079,67 +5079,73 @@ class block_3d_world_renderer : public world_renderer
                 const float xb = static_cast<float>( cb * col_w + col_w );
                 const float ppu0 = vh / d0;
                 const float ppu1 = vh / d1;
-                const float y0a = vh / 2.0f + ( eye_h - h.top_z ) * ppu0;
-                const float y1a = vh / 2.0f + eye_h * ppu0;
-                const float y0b = vh / 2.0f + ( eye_h - h.top_z ) * ppu1;
-                const float y1b = vh / 2.0f + eye_h * ppu1;
                 const float face = h.side == 1 ? 1.0f : 0.84f;
                 const float light = render_3d::light_factor( here.ambient_light_at( h.cell ) );
                 const float att0 = std::clamp( 1.8f / ( 1.8f + 0.12f * d0 ), 0.25f, 1.0f );
                 const float att1 = std::clamp( 1.8f / ( 1.8f + 0.12f * d1 ), 0.25f, 1.0f );
-                std::pair<ter_tex, ter_tex> cells;
-                render_3d::rgba fallback;
-                hit_style( h, cells, fallback );
-                if( cells.second != ter_tex::none && terrain_atlas_ ) {
-                    render_3d::sprite_uv uv;
-                    terrain_uv( animated_tex( cells.second ), uv );
-                    const float half_texel = 0.5f / terrain_atlas_w_;
-                    float ua = std::clamp( uv.u0 + wx0 * ( uv.u1 - uv.u0 ),
-                                           uv.u0 + half_texel, uv.u1 - half_texel );
-                    float ub = std::clamp( uv.u0 + wx1 * ( uv.u1 - uv.u0 ),
-                                           uv.u0 + half_texel, uv.u1 - half_texel );
-                    // A degenerate u span renders untextured on the software
-                    // rasterizer; keep at least a half texel of extent.
-                    if( std::fabs( ub - ua ) < half_texel ) {
-                        ua = std::max( uv.u0 + half_texel, ua - half_texel );
-                        ub = std::min( uv.u1 - half_texel, ub + half_texel );
+                const render_3d::rgba ta = render_3d::grade(
+                                               render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                       light * att0 * face ), env_ );
+                const render_3d::rgba tb = render_3d::grade(
+                                               render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
+                                                       light * att1 * face ), env_ );
+                // Stack unit-height segments, each surfaced from its own
+                // z-level: the ground hit knows about furniture and
+                // vehicles, upper stories show the stacked cell's terrain —
+                // a door at street level gets brick above it, not another
+                // door.
+                for( float z_lo = 0.0f; z_lo < h.top_z; z_lo += 1.0f ) {
+                    const float z_hi = std::min( z_lo + 1.0f, h.top_z );
+                    std::pair<ter_tex, ter_tex> cells;
+                    render_3d::rgba fallback;
+                    if( z_lo < 0.5f ) {
+                        hit_style( h, cells, fallback );
+                    } else {
+                        const tripoint_bub_ms up =
+                            h.cell + tripoint( 0, 0, static_cast<int>( z_lo ) );
+                        cells = terrain_cells( here.ter( up ).id().str() );
+                        fallback = to_rgba( curses_color_to_SDL( here.ter( up )->color() ) );
                     }
-                    const render_3d::rgba ta = render_3d::grade(
-                                                   render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
-                                                           light * att0 * face ), env_ );
-                    const render_3d::rgba tb = render_3d::grade(
-                                                   render_3d::shade( render_3d::rgba{ 255, 255, 255, 255 },
-                                                           light * att1 * face ), env_ );
-                    begin_run( terrain_atlas_.get() );
-                    // Stack unit-height segments so multi-story walls repeat
-                    // the texture instead of stretching it.
-                    for( float z_lo = 0.0f; z_lo < h.top_z; z_lo += 1.0f ) {
-                        const float z_hi = std::min( z_lo + 1.0f, h.top_z );
-                        const float sy0a = vh / 2.0f + ( eye_h - z_hi ) * ppu0;
-                        const float sy1a = vh / 2.0f + ( eye_h - z_lo ) * ppu0;
-                        const float sy0b = vh / 2.0f + ( eye_h - z_hi ) * ppu1;
-                        const float sy1b = vh / 2.0f + ( eye_h - z_lo ) * ppu1;
+                    const float sy0a = vh / 2.0f + ( eye_h - z_hi ) * ppu0;
+                    const float sy1a = vh / 2.0f + ( eye_h - z_lo ) * ppu0;
+                    const float sy0b = vh / 2.0f + ( eye_h - z_hi ) * ppu1;
+                    const float sy1b = vh / 2.0f + ( eye_h - z_lo ) * ppu1;
+                    if( cells.second != ter_tex::none && terrain_atlas_ ) {
+                        render_3d::sprite_uv uv;
+                        terrain_uv( animated_tex( cells.second ), uv );
+                        const float half_texel = 0.5f / terrain_atlas_w_;
+                        float ua = std::clamp( uv.u0 + wx0 * ( uv.u1 - uv.u0 ),
+                                               uv.u0 + half_texel, uv.u1 - half_texel );
+                        float ub = std::clamp( uv.u0 + wx1 * ( uv.u1 - uv.u0 ),
+                                               uv.u0 + half_texel, uv.u1 - half_texel );
+                        // A degenerate u span renders untextured on the
+                        // software rasterizer; keep half a texel of extent.
+                        if( std::fabs( ub - ua ) < half_texel ) {
+                            ua = std::max( uv.u0 + half_texel, ua - half_texel );
+                            ub = std::min( uv.u1 - half_texel, ub + half_texel );
+                        }
                         const float vtop = uv.v0;
                         const float vbot = uv.v0 + ( uv.v1 - uv.v0 ) * ( z_hi - z_lo );
+                        begin_run( terrain_atlas_.get() );
                         verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ta, ua, vtop, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xb, oy + sy0b, tb, ub, vtop, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, tb, ub, vbot, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ta, ua, vtop, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, tb, ub, vbot, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xa, oy + sy1a, ta, ua, vbot, 0.0f } );
+                    } else {
+                        const render_3d::rgba ca_c = render_3d::grade(
+                                                         render_3d::shade( fallback, light * att0 * face ), env_ );
+                        const render_3d::rgba cb_c = render_3d::grade(
+                                                         render_3d::shade( fallback, light * att1 * face ), env_ );
+                        begin_run( nullptr );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ca_c, 0.0f, 0.0f, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy0b, cb_c, 0.0f, 0.0f, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, cb_c, 0.0f, 0.0f, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy0a, ca_c, 0.0f, 0.0f, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, cb_c, 0.0f, 0.0f, 0.0f } );
+                        verts_.push_back( render_3d::vtx{ ox + xa, oy + sy1a, ca_c, 0.0f, 0.0f, 0.0f } );
                     }
-                } else {
-                    const render_3d::rgba ca_c = render_3d::grade(
-                                                     render_3d::shade( fallback, light * att0 * face ), env_ );
-                    const render_3d::rgba cb_c = render_3d::grade(
-                                                     render_3d::shade( fallback, light * att1 * face ), env_ );
-                    begin_run( nullptr );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y0a, ca_c, 0.0f, 0.0f, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y0b, cb_c, 0.0f, 0.0f, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y1b, cb_c, 0.0f, 0.0f, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y0a, ca_c, 0.0f, 0.0f, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xb, oy + y1b, cb_c, 0.0f, 0.0f, 0.0f } );
-                    verts_.push_back( render_3d::vtx{ ox + xa, oy + y1a, ca_c, 0.0f, 0.0f, 0.0f } );
                 }
             };
             // Accumulator merging consecutive columns that hit the same wall
