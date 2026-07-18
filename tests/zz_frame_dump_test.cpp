@@ -37,6 +37,8 @@ static const ter_str_id ter_t_brick_wall( "t_brick_wall" );
 static const ter_str_id ter_t_floor( "t_floor" );
 static const ter_str_id ter_t_tree( "t_tree" );
 static const ter_str_id ter_t_pavement( "t_pavement" );
+static const ter_str_id ter_t_door_c( "t_door_c" );
+static const furn_str_id furn_f_counter( "f_counter" );
 static const mtype_id mon_zombie_dump( "mon_zombie" );
 
 TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
@@ -87,6 +89,11 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
     here.ter_set( c + point( -6, -6 ), ter_t_tree );
     here.ter_set( c + point( -8, 4 ), ter_t_tree );
     here.ter_set( c + point( 5, -5 ), ter_t_tree );
+    // A closed door in the building's north face and counters outside, so
+    // the first-person dump shows furniture and door detail.
+    here.ter_set( c + point( 8, 5 ), ter_t_door_c );
+    here.furn_set( c + point( 3, 6 ), furn_f_counter );
+    here.furn_set( c + point( 3, 7 ), furn_f_counter );
 
     // Entities: a zombie, an NPC, and ground items.
     monster &zed = spawn_test_monster( mon_zombie_dump.str(), c + point( -4, -3 ) );
@@ -137,7 +144,12 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
     uistate.tileset_zoom = 128;
     REQUIRE( wr.handle_zoom_in() );
     const render_scene fp_scene{ point::zero, you.pos_bub(), vw, vh };
-    wr.draw_world( fp_scene, overlay_strings, color_blocks );
+    // The camera eases toward its target over a few hundred ms of drawing;
+    // pump frames until it has converged so the dump is deterministic.
+    for( int i = 0; i < 30; i++ ) {
+        wr.draw_world( fp_scene, overlay_strings, color_blocks );
+        SDL_Delay( 20 );
+    }
     save_frame( "block3d_fp.bmp" );
     REQUIRE( wr.handle_zoom_out() );
 
