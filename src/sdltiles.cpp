@@ -4254,10 +4254,13 @@ class block_3d_world_renderer : public world_renderer
             player = 0, npc, zombie, human, skeleton, robot, child, hulk,
             mammal, insect, spider, bird, reptile, fish, slime, fungus,
             gun, melee, ammo, food, drink, clothing, tool, book,
-            container, chem, electronic, material, generic, corpse, plant, creature
+            container, chem, electronic, material, generic, corpse, plant, creature,
+            bear, rat, nether, feral, cow, frog, bat, worm,
+            player_f, npc_f, zombie_spitter, zombie_shocker, zombie_soldier,
+            squirrel, moose, crow
         };
         static constexpr int art_cols = 8;
-        static constexpr int art_rows = 4;
+        static constexpr int art_rows = 6;
 
         // Cell indices into the built-in terrain texture atlas, mirroring
         // TERRAIN_LAYOUT in tools/gfx/gen_block3d_sprites.py. Tileable 32px
@@ -6024,7 +6027,10 @@ class block_3d_world_renderer : public world_renderer
         }
 
         static art character_art( const Character &ch ) {
-            return ch.is_npc() ? art::npc : art::player;
+            if( ch.is_npc() ) {
+                return ch.male ? art::npc : art::npc_f;
+            }
+            return ch.male ? art::player : art::player_f;
         }
 
         // Map a monster to the closest built-in archetype by species (and
@@ -6050,9 +6056,45 @@ class block_3d_world_renderer : public world_renderer
             static const species_id FUNGUS( "FUNGUS" );
             static const species_id PLANT( "PLANT" );
             static const species_id LEECH_PLANT( "LEECH_PLANT" );
+            static const species_id NETHER( "NETHER" );
+            static const species_id NETHER_BURROWING( "NETHER_BURROWING" );
+            static const species_id NETHER_EMANATION( "NETHER_EMANATION" );
+            static const species_id HORROR( "HORROR" );
+            static const species_id ABERRATION( "ABERRATION" );
+            static const species_id MIGO( "MIGO" );
+            static const species_id MUTANT( "MUTANT" );
+            static const species_id FERAL( "FERAL" );
             const mtype &t = *mon.type;
+            const std::string &id = t.id.str();
+            const auto has = [&id]( const char *const kw ) {
+                return id.find( kw ) != std::string::npos;
+            };
             if( t.in_species( ZOMBIE ) ) {
-                return t.size >= creature_size::huge ? art::hulk : art::zombie;
+                if( t.size >= creature_size::huge ) {
+                    return art::hulk;
+                }
+                if( has( "spitter" ) || has( "acid" ) ) {
+                    return art::zombie_spitter;
+                }
+                if( has( "shock" ) || has( "electric" ) ) {
+                    return art::zombie_shocker;
+                }
+                if( has( "soldier" ) || has( "military" ) || has( "bio_op" ) ) {
+                    return art::zombie_soldier;
+                }
+                if( has( "child" ) ) {
+                    return art::child;
+                }
+                return art::zombie;
+            }
+            if( t.in_species( FERAL ) ) {
+                return art::feral;
+            }
+            if( t.in_species( NETHER ) || t.in_species( NETHER_BURROWING ) ||
+                t.in_species( NETHER_EMANATION ) || t.in_species( HORROR ) ||
+                t.in_species( ABERRATION ) || t.in_species( MIGO ) ||
+                t.in_species( MUTANT ) ) {
+                return art::nether;
             }
             if( t.in_species( ROBOT ) || t.in_species( ROBOT_FLYING ) || t.in_species( CYBORG ) ) {
                 return art::robot;
@@ -6060,20 +6102,46 @@ class block_3d_world_renderer : public world_renderer
             if( t.in_species( SPIDER ) ) {
                 return art::spider;
             }
+            if( t.in_species( WORM ) ) {
+                return art::worm;
+            }
             if( t.in_species( INSECT ) || t.in_species( INSECT_FLYING ) ||
-                t.in_species( CENTIPEDE ) || t.in_species( WORM ) ) {
+                t.in_species( CENTIPEDE ) ) {
                 return art::insect;
             }
             if( t.in_species( BIRD ) ) {
-                return art::bird;
+                return has( "crow" ) || has( "raven" ) ? art::crow : art::bird;
             }
-            if( t.in_species( FISH ) || t.in_species( MOLLUSK ) || t.in_species( AMPHIBIAN ) ) {
+            if( t.in_species( AMPHIBIAN ) ) {
+                return art::frog;
+            }
+            if( t.in_species( FISH ) || t.in_species( MOLLUSK ) ) {
                 return art::fish;
             }
             if( t.in_species( REPTILE ) ) {
                 return art::reptile;
             }
             if( t.in_species( MAMMAL ) ) {
+                if( has( "bear" ) ) {
+                    return art::bear;
+                }
+                if( has( "moose" ) || has( "deer" ) ) {
+                    return art::moose;
+                }
+                if( has( "cow" ) || has( "bull" ) || has( "horse" ) || has( "sheep" ) ||
+                    has( "pig" ) ) {
+                    return art::cow;
+                }
+                if( has( "rat" ) || has( "mouse" ) || has( "mole" ) ) {
+                    return art::rat;
+                }
+                if( has( "squirrel" ) || has( "chipmunk" ) || has( "rabbit" ) ||
+                    has( "hare" ) ) {
+                    return art::squirrel;
+                }
+                if( has( "bat" ) ) {
+                    return art::bat;
+                }
                 return art::mammal;
             }
             if( t.in_species( SLIME ) ) {

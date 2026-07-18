@@ -117,9 +117,9 @@ TEST_CASE( "block_3d_entity_atlas_present", "[tiles][render_3d]" )
     REQUIRE_NOTHROW( entities = load_image_mem( block3d_entities_png,
                                 block3d_entities_png_len ) );
     REQUIRE( entities );
-    // 8x4 grid of 64px cells (tools/gfx/gen_block3d_sprites.py).
+    // 8x6 grid of 64px cells (tools/gfx/gen_block3d_sprites.py).
     CHECK( entities->w == 512 );
-    CHECK( entities->h == 256 );
+    CHECK( entities->h == 384 );
 
     SDL_Surface_Ptr terrain;
     REQUIRE_NOTHROW( terrain = load_image_mem( block3d_terrain_png,

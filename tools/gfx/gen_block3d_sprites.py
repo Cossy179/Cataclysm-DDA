@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw
 
 CELL = 64
 COLS = 8
-ROWS = 4
+ROWS = 6
 OUTLINE = (24, 22, 28, 255)
 
 # Cell layout — index = row * COLS + col. Must match entity_art in sdltiles.cpp.
@@ -32,6 +32,11 @@ LAYOUT = [
     # row 3: items B + misc
     "container", "chem", "electronic", "material", "generic", "corpse",
     "plant", "creature",
+    # row 4: more creatures
+    "bear", "rat", "nether", "feral", "cow", "frog", "bat", "worm",
+    # row 5: female characters, zombie variants, small animals
+    "player_f", "npc_f", "zombie_spitter", "zombie_shocker", "zombie_soldier",
+    "squirrel", "moose", "crow",
 ]
 
 
@@ -87,10 +92,15 @@ METAL = (150, 158, 170, 255)
 METAL_D = (96, 104, 120, 255)
 
 
-def humanoid(c, skin, shirt, pants, hair=HAIR, hunch=0, glow_eyes=False):
+def humanoid(c, skin, shirt, pants, hair=HAIR, hunch=0, glow_eyes=False,
+             long_hair=False, eye=None, helmet=None):
     """A simple front-facing biped: head, torso, arms, legs; feet ~y=60."""
     cx = 32
     top = 10 + hunch
+    # long hair falls behind the shoulders
+    if long_hair:
+        c.rrect((22, top + 6, 27, top + 26), hair, r=2)
+        c.rrect((37, top + 6, 42, top + 26), hair, r=2)
     # legs
     c.rrect((25, 44, 31, 60), pants, r=3)
     c.rrect((33, 44, 39, 60), pants, r=3)
@@ -109,8 +119,12 @@ def humanoid(c, skin, shirt, pants, hair=HAIR, hunch=0, glow_eyes=False):
     c.d.ellipse((24, top, 40, top + 17), outline=OUTLINE)
     # face shade
     c.d.pieslice((24, top, 40, top + 17), 20, 130, fill=shade(skin, 0.82))
+    if helmet:
+        c.d.pieslice((23, top - 2, 41, top + 16), 180, 360, fill=helmet)
+        c.d.arc((23, top - 2, 41, top + 16), 180, 360, fill=OUTLINE)
     # eyes
-    eye = (40, 210, 90, 255) if glow_eyes else (40, 34, 40, 255)
+    if eye is None:
+        eye = (40, 210, 90, 255) if glow_eyes else (40, 34, 40, 255)
     c.d.ellipse((28, top + 8, 30, top + 10), fill=eye)
     c.d.ellipse((34, top + 8, 36, top + 10), fill=eye)
 
@@ -433,6 +447,167 @@ def draw_creature(c):
     c.d.ellipse((35, 36, 38, 39), fill=(30, 26, 24, 255))
 
 
+def draw_bear(c):
+    body = (104, 78, 56, 255)
+    c.rrect((12, 26, 48, 48), body, r=9)
+    for x in (15, 24, 34, 42):
+        c.rrect((x, 46, x + 6, 58), shade(body, 0.8), r=2)
+    c.solid_ellipse((40, 16, 58, 34), body)          # head
+    c.poly([(42, 16), (45, 10), (48, 18)], body)      # ear
+    c.poly([(52, 15), (55, 10), (58, 18)], body)
+    c.solid_ellipse((52, 24, 60, 31), shade(body, 1.2))  # snout
+    c.d.ellipse((47, 21, 50, 24), fill=(30, 26, 24, 255))
+
+
+def draw_rat(c):
+    body = (128, 122, 118, 255)
+    c.solid_ellipse((18, 40, 44, 56), body)
+    c.solid_ellipse((38, 38, 52, 50), body)          # head
+    c.poly([(50, 42), (58, 44), (50, 47)], (200, 160, 160, 255))  # snout
+    c.poly([(40, 36), (43, 30), (46, 38)], (170, 140, 140, 255))  # ear
+    c.line((18, 48, 6, 42), (190, 150, 150, 255), w=2)  # tail
+    c.d.ellipse((44, 42, 46, 44), fill=(30, 26, 24, 255))
+
+
+def draw_nether(c):
+    body = (96, 60, 120, 255)
+    c.solid_ellipse((18, 22, 46, 52), body)
+    # writhing tendrils
+    for x, dx in ((20, -8), (28, -4), (36, 4), (44, 8)):
+        c.line((x, 50, x + dx, 60), shade(body, 0.75), w=3)
+    # too many eyes
+    for ex, ey in ((25, 30), (33, 26), (39, 32), (29, 38), (37, 40)):
+        c.d.ellipse((ex - 2, ey - 2, ex + 2, ey + 2), fill=(240, 210, 90, 255))
+        c.d.ellipse((ex - 1, ey - 1, ex + 1, ey + 1), fill=(60, 20, 20, 255))
+
+
+def draw_feral(c):
+    humanoid(c, SKIN, (96, 84, 70, 255), (70, 62, 54, 255),
+             hair=(52, 40, 32, 255), hunch=2, eye=(210, 60, 50, 255),
+             long_hair=True)
+    # torn clothing marks
+    c.d.line((26, 34, 30, 38), fill=(60, 50, 42, 255), width=2)
+    c.d.line((36, 40, 39, 43), fill=(60, 50, 42, 255), width=2)
+
+
+def draw_cow(c):
+    body = (222, 214, 202, 255)
+    c.rrect((12, 26, 48, 48), body, r=8)
+    # patches
+    c.solid_ellipse((18, 30, 30, 42), (70, 58, 50, 255))
+    c.solid_ellipse((34, 34, 44, 44), (70, 58, 50, 255))
+    for x in (15, 24, 34, 42):
+        c.rrect((x, 46, x + 5, 58), shade(body, 0.85), r=2)
+    c.solid_ellipse((42, 18, 58, 34), body)          # head
+    c.poly([(43, 18), (40, 12), (47, 16)], (170, 150, 140, 255))  # ear
+    c.solid_ellipse((50, 26, 60, 34), (216, 180, 178, 255))       # muzzle
+    c.d.ellipse((47, 22, 50, 25), fill=(30, 26, 24, 255))
+
+
+def draw_frog(c):
+    body = (96, 156, 84, 255)
+    c.solid_ellipse((16, 34, 48, 56), body)
+    c.solid_ellipse((20, 26, 32, 40), body)          # eye bumps
+    c.solid_ellipse((34, 26, 46, 40), body)
+    c.d.ellipse((24, 29, 29, 34), fill=(240, 240, 220, 255))
+    c.d.ellipse((37, 29, 42, 34), fill=(240, 240, 220, 255))
+    c.d.ellipse((26, 30, 28, 33), fill=(30, 26, 24, 255))
+    c.d.ellipse((38, 30, 41, 33), fill=(30, 26, 24, 255))
+    c.poly([(14, 52), (6, 58), (18, 56)], shade(body, 0.85))   # legs
+    c.poly([(50, 52), (58, 58), (46, 56)], shade(body, 0.85))
+
+
+def draw_bat(c):
+    wing = (58, 50, 62, 255)
+    body = (76, 64, 76, 255)
+    c.poly([(30, 30), (6, 22), (12, 36), (20, 34), (28, 40)], wing)
+    c.poly([(34, 30), (58, 22), (52, 36), (44, 34), (36, 40)], wing)
+    c.solid_ellipse((26, 26, 38, 44), body)
+    c.poly([(28, 26), (26, 18), (32, 24)], body)
+    c.poly([(36, 26), (38, 18), (32, 24)], body)
+    c.d.ellipse((29, 31, 31, 33), fill=(220, 200, 90, 255))
+    c.d.ellipse((33, 31, 35, 33), fill=(220, 200, 90, 255))
+
+
+def draw_worm(c):
+    body = (196, 132, 128, 255)
+    # segmented coil
+    for i, (x, y, r) in enumerate(((16, 48, 8), (26, 42, 9), (38, 44, 9),
+                                   (48, 38, 8), (44, 26, 7))):
+        c.solid_ellipse((x - r, y - r, x + r, y + r),
+                        shade(body, 1.0 - 0.05 * i))
+    c.d.ellipse((40, 20, 50, 30), fill=shade(body, 1.1), outline=OUTLINE)
+    c.d.ellipse((43, 23, 47, 27), fill=(120, 60, 60, 255))  # maw
+
+
+def draw_player_f(c):
+    humanoid(c, SKIN, (140, 80, 140, 255), PANTS, hair=(90, 60, 34, 255),
+             long_hair=True)
+
+
+def draw_npc_f(c):
+    humanoid(c, SKIN, (80, 130, 110, 255), (74, 70, 60, 255),
+             hair=(40, 34, 30, 255), long_hair=True)
+
+
+def draw_zombie_spitter(c):
+    humanoid(c, (160, 164, 96, 255), (110, 112, 76, 255), (86, 88, 62, 255),
+             hair=(80, 84, 50, 255), hunch=3)
+    # acid drool
+    c.d.line((32, 24, 32, 30), fill=(180, 220, 60, 255), width=2)
+    c.d.ellipse((30, 30, 34, 34), fill=(180, 220, 60, 255))
+
+
+def draw_zombie_shocker(c):
+    humanoid(c, (150, 170, 200, 255), (100, 116, 150, 255), (80, 92, 120, 255),
+             hair=(110, 130, 160, 255), hunch=2, eye=(120, 200, 255, 255))
+    # sparks
+    for x, y in ((20, 22), (44, 30), (26, 46)):
+        c.d.line((x - 3, y, x + 3, y), fill=(170, 230, 255, 255), width=1)
+        c.d.line((x, y - 3, x, y + 3), fill=(170, 230, 255, 255), width=1)
+
+
+def draw_zombie_soldier(c):
+    humanoid(c, ZOMBIE_SKIN, (92, 104, 72, 255), (78, 88, 62, 255),
+             hair=(60, 70, 50, 255), hunch=2, helmet=(70, 80, 58, 255))
+    # webbing strap
+    c.d.line((24, 30, 40, 42), fill=(56, 64, 44, 255), width=3)
+
+
+def draw_squirrel(c):
+    body = (150, 104, 66, 255)
+    c.solid_ellipse((24, 42, 42, 56), body)
+    c.solid_ellipse((36, 34, 48, 46), body)          # head
+    # big curled tail
+    c.d.arc((10, 26, 34, 54), 90, 300, fill=shade(body, 0.85), width=6)
+    c.poly([(38, 32), (40, 27), (43, 33)], body)      # ear
+    c.d.ellipse((41, 38, 43, 40), fill=(30, 26, 24, 255))
+
+
+def draw_moose(c):
+    body = (98, 76, 58, 255)
+    c.rrect((12, 24, 44, 44), body, r=8)
+    for x in (14, 22, 32, 39):
+        c.rrect((x, 42, x + 5, 60), shade(body, 0.8), r=2)
+    c.solid_ellipse((38, 12, 54, 30), body)          # head
+    c.solid_ellipse((48, 20, 58, 30), shade(body, 0.9))  # muzzle
+    # antlers
+    c.d.arc((28, 2, 46, 18), 180, 330, fill=(196, 178, 140, 255), width=3)
+    c.d.arc((42, 2, 60, 18), 210, 360, fill=(196, 178, 140, 255), width=3)
+    c.d.ellipse((43, 17, 46, 20), fill=(30, 26, 24, 255))
+
+
+def draw_crow(c):
+    body = (48, 48, 56, 255)
+    c.solid_ellipse((22, 32, 44, 50), body)
+    c.solid_ellipse((36, 22, 48, 34), body)          # head
+    c.poly([(46, 26), (56, 28), (46, 31)], (110, 110, 118, 255))  # beak
+    c.poly([(22, 36), (8, 32), (22, 46)], shade(body, 0.8))       # wing
+    c.line((30, 50, 28, 60), (110, 110, 118, 255), w=2)
+    c.line((36, 50, 38, 60), (110, 110, 118, 255), w=2)
+    c.d.ellipse((40, 26, 43, 29), fill=(220, 220, 226, 255))
+
+
 DRAW = {
     "player": draw_player, "npc": draw_npc, "zombie": draw_zombie,
     "human": draw_human, "skeleton": draw_skeleton, "robot": draw_robot,
@@ -446,6 +621,13 @@ DRAW = {
     "container": draw_container, "chem": draw_chem, "electronic": draw_electronic,
     "material": draw_material, "generic": draw_generic, "corpse": draw_corpse,
     "plant": draw_plant, "creature": draw_creature,
+    "bear": draw_bear, "rat": draw_rat, "nether": draw_nether,
+    "feral": draw_feral, "cow": draw_cow, "frog": draw_frog, "bat": draw_bat,
+    "worm": draw_worm,
+    "player_f": draw_player_f, "npc_f": draw_npc_f,
+    "zombie_spitter": draw_zombie_spitter, "zombie_shocker": draw_zombie_shocker,
+    "zombie_soldier": draw_zombie_soldier, "squirrel": draw_squirrel,
+    "moose": draw_moose, "crow": draw_crow,
 }
 
 
