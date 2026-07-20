@@ -280,6 +280,14 @@ TEST_CASE( "block_3d_first_person_smoke", "[tiles][render_3d]" )
     CHECK_FALSE( wr.handle_zoom_out() );
     // Outside first person, movement is world-compass identity.
     CHECK( wr.remap_move_delta( point::north ) == point::north );
+
+    // First person is part of the zoom-in cycle: the next zoom-in exits it
+    // and falls through (returns false) so the vanilla wrap-around lands on
+    // the fully zoomed-out block view.
+    REQUIRE( wr.handle_zoom_in() );
+    CHECK_FALSE( wr.handle_zoom_in() );
+    CHECK_FALSE( wr.handle_zoom_out() );
+    CHECK( wr.remap_move_delta( point::north ) == point::north );
     uistate.tileset_zoom = saved_zoom;
 }
 

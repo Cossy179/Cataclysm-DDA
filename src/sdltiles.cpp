@@ -3766,10 +3766,14 @@ class block_3d_world_renderer : public world_renderer
         }
 
         // Zooming in past the maximum tile zoom drops into the first-person
-        // view; zooming out steps back to the axonometric block view.
+        // view. First person is part of the zoom-in cycle: the next zoom-in
+        // leaves it and falls through to the vanilla wrap-around, landing on
+        // the fully zoomed-out block view. Zoom-out steps back to the
+        // zoomed-in block view instead.
         bool handle_zoom_in() override {
             if( first_person_ ) {
-                return true;
+                first_person_ = false;
+                return false;
             }
             if( uistate.tileset_zoom >= 128 ) {
                 first_person_ = true;
