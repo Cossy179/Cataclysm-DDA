@@ -14,6 +14,8 @@
 #include "avatar.h"
 #include "cata_catch.h"
 #include "coordinates.h"
+#include "field.h"
+#include "field_type.h"
 #include "item.h"
 #include "map.h"
 #include "map_helpers.h"
@@ -102,6 +104,11 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
     here.ter_set( c + point( -6, -6 ), ter_t_tree );
     here.ter_set( c + point( -8, 4 ), ter_t_tree );
     here.ter_set( c + point( 5, -5 ), ter_t_tree );
+    // Tall grass and a fire, for the animated-texture and flame paths.
+    for( int dx = -2; dx <= 0; dx++ ) {
+        here.ter_set( c + point( dx, 4 ), ter_str_id( "t_grass_tall" ) );
+    }
+    here.add_field( c + point( 2, 3 ), field_type_id( "fd_fire" ), 2 );
     // A closed door in the building's north face and counters outside, so
     // the first-person dump shows furniture and door detail.
     here.ter_set( c + point( 8, 5 ), ter_t_door_c );

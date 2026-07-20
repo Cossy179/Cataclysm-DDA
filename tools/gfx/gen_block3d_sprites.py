@@ -638,7 +638,7 @@ import random
 
 TER_CELL = 32
 TER_COLS = 8
-TER_ROWS = 4
+TER_ROWS = 5
 TERRAIN_LAYOUT = [
     "grass", "tall_grass", "dirt", "sand", "gravel", "pavement", "sidewalk",
     "concrete",
@@ -648,6 +648,8 @@ TERRAIN_LAYOUT = [
     "metal",
     "water2", "deep_water2", "rubble", "fungal", "ice", "snow", "tile_floor",
     "rock_floor",
+    "grass2", "tall_grass2", "shrub2", "underbrush2", "tree2", "fire", "fire2",
+    "smoke",
 ]
 
 
@@ -935,6 +937,35 @@ def t_rock_floor(d, rng):
                fill=(104, 100, 98, 255))
 
 
+def t_fire(d, rng):
+    speckle(d, rng, (224, 110, 40, 255),
+            [(240, 160, 50, 255), (204, 84, 30, 255), (250, 200, 80, 255),
+             (180, 60, 26, 255)], n=170)
+    # rising flame licks
+    for _ in range(12):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(10, TER_CELL)
+        d.line((x, y, x + rng.choice((-1, 0, 1)), y - rng.randrange(6, 14)),
+               fill=(252, 222, 96, 255), width=2)
+    for _ in range(5):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(4, 14)
+        d.point((x, y), (255, 240, 160, 255))
+
+
+def t_smoke(d, rng):
+    d.rectangle((0, 0, TER_CELL - 1, TER_CELL - 1), fill=(112, 112, 116, 210))
+    for _ in range(90):
+        d.point((rng.randrange(TER_CELL), rng.randrange(TER_CELL)),
+                fill=rng.choice([(140, 140, 145, 200), (94, 94, 98, 220),
+                                 (160, 160, 165, 170)]))
+    for _ in range(6):
+        x = rng.randrange(TER_CELL)
+        y = rng.randrange(TER_CELL)
+        d.arc((x, y, x + rng.randrange(6, 14), y + rng.randrange(4, 8)),
+              0, 180, fill=(150, 150, 154, 190))
+
+
 TERRAIN_DRAW = {
     "grass": t_grass, "tall_grass": t_tall_grass, "dirt": t_dirt,
     "sand": t_sand, "gravel": t_gravel, "pavement": t_pavement,
@@ -950,6 +981,11 @@ TERRAIN_DRAW = {
     "water2": t_water, "deep_water2": t_deep_water,
     "rubble": t_rubble, "fungal": t_fungal, "ice": t_ice, "snow": t_snow,
     "tile_floor": t_tile_floor, "rock_floor": t_rock_floor,
+    # Animation frames reuse the base painters with name-keyed rng seeds,
+    # giving shifted blades/leaves/flames for the two-frame swap.
+    "grass2": t_grass, "tall_grass2": t_tall_grass, "shrub2": t_shrub,
+    "underbrush2": t_underbrush, "tree2": t_tree,
+    "fire": t_fire, "fire2": t_fire, "smoke": t_smoke,
 }
 
 

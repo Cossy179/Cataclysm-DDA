@@ -125,9 +125,9 @@ TEST_CASE( "block_3d_entity_atlas_present", "[tiles][render_3d]" )
     REQUIRE_NOTHROW( terrain = load_image_mem( block3d_terrain_png,
                                block3d_terrain_png_len ) );
     REQUIRE( terrain );
-    // 8x4 grid of 32px cells.
+    // 8x5 grid of 32px cells.
     CHECK( terrain->w == 256 );
-    CHECK( terrain->h == 128 );
+    CHECK( terrain->h == 160 );
 }
 
 // The character- and item-sprite paths: the avatar (with worn gear) and a

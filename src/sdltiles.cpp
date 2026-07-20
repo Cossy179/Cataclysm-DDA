@@ -4359,23 +4359,38 @@ class block_3d_world_renderer : public world_renderer
             floor_wood, wall_brick, wall_concrete, roof, water, deep_water, rock, mud,
             tree, shrub, underbrush, door, window, dirt_side, wood_side, metal,
             water2, deep_water2, rubble, fungal, ice, snow, tile_floor, rock_floor,
+            grass2, tall_grass2, shrub2, underbrush2, tree2, fire, fire2, smoke,
             none = -1
         };
         static constexpr int ter_tex_cols = 8;
-        static constexpr int ter_tex_rows = 4;
+        static constexpr int ter_tex_rows = 5;
 
-        // Two-frame water animation: swap the water cells on a timer.
+        // Two-frame texture animation: water ripples, vegetation sways in
+        // the wind, flames dance — swapped on the shared wall-clock phase.
         ter_tex animated_tex( const ter_tex t ) const {
             if( !anim_phase_ ) {
                 return t;
             }
-            if( t == ter_tex::water ) {
-                return ter_tex::water2;
+            switch( t ) {
+                case ter_tex::water:
+                    return ter_tex::water2;
+                case ter_tex::deep_water:
+                    return ter_tex::deep_water2;
+                case ter_tex::grass:
+                    return ter_tex::grass2;
+                case ter_tex::tall_grass:
+                    return ter_tex::tall_grass2;
+                case ter_tex::shrub:
+                    return ter_tex::shrub2;
+                case ter_tex::underbrush:
+                    return ter_tex::underbrush2;
+                case ter_tex::tree:
+                    return ter_tex::tree2;
+                case ter_tex::fire:
+                    return ter_tex::fire2;
+                default:
+                    return t;
             }
-            if( t == ter_tex::deep_water ) {
-                return ter_tex::deep_water2;
-            }
-            return t;
         }
 
         struct draw_entry {
@@ -4457,6 +4472,32 @@ class block_3d_world_renderer : public world_renderer
                         // the dark without reading as fully lit.
                         base = render_3d::rgba{ 70, 70, 70, 255 };
                         break;
+                    }
+                    // Never-seen cells under a roof render as the closed
+                    // building mass they are: a full block whose top face
+                    // carries the actual roof terrain above, lit by the
+                    // roof's own outdoor light — buildings read as roofed
+                    // structures instead of black pits.
+                    {
+                        const tripoint_bub_ms above = p + tripoint( 0, 0, 1 );
+                        if( p.z() < OVERMAP_HEIGHT && here.inbounds( above ) &&
+                            !here.has_flag( ter_furn_flag::TFLAG_NO_FLOOR, above ) ) {
+                            const float roof_light = render_3d::light_factor(
+                                                         here.ambient_light_at( above ) );
+                            draw_entry roof_e{ dx, dy, dz, 0.0f, 1.0f,
+                                               render_3d::grade( render_3d::shade(
+                                                       to_rgba( curses_color_to_SDL(
+                                                                    here.ter( above )->color() ) ),
+                                                       roof_light ), env_ ),
+                                               entry_kind::block };
+                            if( attach_terrain_art( roof_e, here.ter( above ).id().str() ) ) {
+                                roof_e.tint = render_3d::grade( render_3d::shade(
+                                                                    render_3d::rgba{ 255, 255, 255, 255 },
+                                                                    roof_light ), env_ );
+                            }
+                            push( roof_e );
+                            return 1.0f;
+                        }
                     }
                     return 0.0f;
                 }
@@ -4633,6 +4674,24 @@ class block_3d_world_renderer : public world_renderer
                         draw_entry fld_e{ dx, dy, dz, top_h, fld_top, fld_color,
                                           entry_kind::block };
                         fld_e.emissive = emissive;
+                        // Fire gets a real animated flame texture; smoke gets
+                        // drifting gray wisps. Other fields stay color washes.
+                        ensure_entity_atlas();
+                        if( terrain_atlas_ ) {
+                            if( emissive ) {
+                                fld_e.tex = terrain_atlas_.get();
+                                terrain_uv( animated_tex( ter_tex::fire ), fld_e.uv );
+                                terrain_uv( animated_tex( ter_tex::fire ), fld_e.side_uv );
+                                fld_e.side_textured = true;
+                                fld_e.tint = render_3d::rgba{ 255, 255, 255, 235 };
+                            } else if( ftype.id().str().find( "smoke" ) != std::string::npos ) {
+                                fld_e.tex = terrain_atlas_.get();
+                                terrain_uv( ter_tex::smoke, fld_e.uv );
+                                terrain_uv( ter_tex::smoke, fld_e.side_uv );
+                                fld_e.side_textured = true;
+                                fld_e.tint = render_3d::rgba{ 255, 255, 255, 170 };
+                            }
+                        }
                         push( fld_e );
                         top_h = fld_top;
                     }
@@ -5394,6 +5453,26 @@ class block_3d_world_renderer : public world_renderer
                             s.scale = 0.15f;
                         }
                         sprites.push_back( s );
+                    }
+                    // Burning cells show a camera-facing animated flame,
+                    // undimmed by ambient light — fire is its own light.
+                    if( terrain_atlas_ ) {
+                        const field &fld = here.field_at( p );
+                        const field_type_id ftype = fld.displayed_field_type();
+                        const field_entry *fe = fld.find_field( ftype );
+                        if( fe != nullptr && ftype.obj().display_field &&
+                            fe->get_intensity_level().light_emitted > 0.0f ) {
+                            fp_sprite s;
+                            s.depth = tdepth;
+                            s.sx = scr_x;
+                            s.scale = 0.8f;
+                            s.tex = terrain_atlas_.get();
+                            terrain_uv( animated_tex( ter_tex::fire ), s.uv );
+                            s.textured = true;
+                            s.tint = render_3d::rgba{ 255, 255, 255,
+                                                      static_cast<uint8_t>( 255 * att ) };
+                            sprites.push_back( s );
+                        }
                     }
                 }
             }
