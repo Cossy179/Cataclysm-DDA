@@ -2761,28 +2761,40 @@
     "name": "Move view north",
     "category": "DEFAULTMODE",
     "id": "shift_n",
-    "bindings": [ { "input_method": "gamepad", "key": "RS_UP" } ]
+    "bindings": [
+      { "input_method": "keyboard_code", "key": "UP", "mod": [ "shift" ] },
+      { "input_method": "gamepad", "key": "RS_UP" }
+    ]
   },
   {
     "type": "keybinding",
     "name": "Move view east",
     "category": "DEFAULTMODE",
     "id": "shift_e",
-    "bindings": [ { "input_method": "gamepad", "key": "RS_RIGHT" } ]
+    "bindings": [
+      { "input_method": "keyboard_code", "key": "RIGHT", "mod": [ "shift" ] },
+      { "input_method": "gamepad", "key": "RS_RIGHT" }
+    ]
   },
   {
     "type": "keybinding",
     "name": "Move view south",
     "category": "DEFAULTMODE",
     "id": "shift_s",
-    "bindings": [ { "input_method": "gamepad", "key": "RS_DOWN" } ]
+    "bindings": [
+      { "input_method": "keyboard_code", "key": "DOWN", "mod": [ "shift" ] },
+      { "input_method": "gamepad", "key": "RS_DOWN" }
+    ]
   },
   {
     "type": "keybinding",
     "name": "Move view west",
     "category": "DEFAULTMODE",
     "id": "shift_w",
-    "bindings": [ { "input_method": "gamepad", "key": "RS_LEFT" } ]
+    "bindings": [
+      { "input_method": "keyboard_code", "key": "LEFT", "mod": [ "shift" ] },
+      { "input_method": "gamepad", "key": "RS_LEFT" }
+    ]
   },
   {
     "type": "keybinding",
