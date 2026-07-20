@@ -3784,15 +3784,57 @@ class block_3d_world_renderer : public world_renderer
             }
             return false;
         }
-        // View-shift keys turn the first-person camera to face that compass
-        // direction (absolute, so "shift view north" always looks north).
+        // View-shift keys turn the first-person camera relative to where it
+        // faces: left/right rotate 45 degrees, back turns around. Forward
+        // pans are consumed without turning so the map never scrolls away.
         bool handle_view_shift( const point &dir ) override {
             if( !first_person_ || ( dir.x == 0 && dir.y == 0 ) ) {
                 return false;
             }
-            heading_ = std::atan2( static_cast<float>( dir.y ),
-                                   static_cast<float>( dir.x ) );
+            constexpr float quarter = static_cast<float>( M_PI ) / 4.0f;
+            if( dir.x < 0 ) {
+                heading_ -= quarter;
+            } else if( dir.x > 0 ) {
+                heading_ += quarter;
+            } else if( dir.y > 0 ) {
+                heading_ += 4.0f * quarter;
+            }
+            while( heading_ > static_cast<float>( M_PI ) ) {
+                heading_ -= 2.0f * static_cast<float>( M_PI );
+            }
+            while( heading_ < -static_cast<float>( M_PI ) ) {
+                heading_ += 2.0f * static_cast<float>( M_PI );
+            }
             return true;
+        }
+
+        // First person walks in view space: rotate the pressed direction by
+        // the camera heading so "forward" is the way the player looks and
+        // left/right strafe, instead of the top-down compass directions.
+        point remap_move_delta( const point &d ) const override {
+            if( !first_person_ || ( d.x == 0 && d.y == 0 ) ) {
+                return d;
+            }
+            static const std::array<point, 8> oct = { {
+                    point{ 1, 0 }, point{ 1, 1 }, point{ 0, 1 }, point{ -1, 1 },
+                    point{ -1, 0 }, point{ -1, -1 }, point{ 0, -1 }, point{ 1, -1 }
+                }
+            };
+            int k = -1;
+            for( int i = 0; i < 8; i++ ) {
+                if( oct[i] == d ) {
+                    k = i;
+                    break;
+                }
+            }
+            if( k < 0 ) {
+                return d;
+            }
+            // Octant of the camera heading; octant 6 is north — the
+            // "forward" key — so forward maps onto the heading.
+            const int h = ( ( static_cast<int>( std::lround(
+                                                    heading_ / ( static_cast<float>( M_PI ) / 4.0f ) ) ) % 8 ) + 8 ) % 8;
+            return oct[( ( k + h - 6 ) % 8 + 8 ) % 8];
         }
 
         point_bub_ms screen_to_map( const point &screen_pos, const point &/* tile_size */,
@@ -3927,7 +3969,10 @@ class block_3d_world_renderer : public world_renderer
             // the first-person camera looks the way the player is walking.
             {
                 const tripoint_abs_ms abs_pos = here.get_abs( you.pos_bub() );
-                if( have_last_pos_ && abs_pos != last_av_pos_ ) {
+                if( have_last_pos_ && abs_pos != last_av_pos_ && !first_person_ ) {
+                    // In first person the camera turns only via the explicit
+                    // look keys (movement is view-relative there); in the
+                    // block view walking sets the facing for a later switch.
                     const int mdx = abs_pos.x() - last_av_pos_.x();
                     const int mdy = abs_pos.y() - last_av_pos_.y();
                     if( mdx != 0 || mdy != 0 ) {

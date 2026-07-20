@@ -89,11 +89,21 @@ class world_renderer
         /**
          * Offer the backend a view-shift (map panning) keypress.  Return
          * true to consume it — in the block_3d first-person view the shift
-         * keys turn the camera to face that compass direction instead of
-         * panning the map.
+         * keys turn the camera (left/right rotate 45 degrees, back turns
+         * around) instead of panning the map.
          */
         virtual bool handle_view_shift( const point &/* dir */ ) {
             return false;
+        }
+
+        /**
+         * Remap a movement keypress delta into the backend's control frame.
+         * The default is identity (world-compass movement); the block_3d
+         * first-person view rotates it by the camera heading, so "forward"
+         * walks the way the player is looking and left/right strafe.
+         */
+        virtual point remap_move_delta( const point &d ) const {
+            return d;
         }
 };
 

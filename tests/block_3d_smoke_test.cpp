@@ -248,10 +248,38 @@ TEST_CASE( "block_3d_first_person_smoke", "[tiles][render_3d]" )
     CHECK( std::abs( picked.x() - you.pos_bub().x() ) <= 25 );
     CHECK( std::abs( picked.y() - you.pos_bub().y() ) <= 25 );
 
+    // First-person controls are view-relative: whatever the current
+    // heading, "forward" remaps to some unit octant step, and turning
+    // right 45 degrees rotates that step one octant clockwise.
+    const auto octant_index = []( const point & p ) {
+        static const std::array<point, 8> oct = { {
+                point{ 1, 0 }, point{ 1, 1 }, point{ 0, 1 }, point{ -1, 1 },
+                point{ -1, 0 }, point{ -1, -1 }, point{ 0, -1 }, point{ 1, -1 }
+            }
+        };
+        for( int i = 0; i < 8; i++ ) {
+            if( oct[i] == p ) {
+                return i;
+            }
+        }
+        return -1;
+    };
+    const point fwd0 = wr.remap_move_delta( point::north );
+    const int k0 = octant_index( fwd0 );
+    REQUIRE( k0 >= 0 );
+    REQUIRE( wr.handle_view_shift( point::east ) );
+    const point fwd1 = wr.remap_move_delta( point::north );
+    CHECK( octant_index( fwd1 ) == ( k0 + 1 ) % 8 );
+    // Turn back left so the heading is restored for later draws.
+    REQUIRE( wr.handle_view_shift( point::west ) );
+    CHECK( wr.remap_move_delta( point::north ) == fwd0 );
+
     // Zoom out leaves first person and consumes the step; the next one
     // falls through to the normal zoom path.
     REQUIRE( wr.handle_zoom_out() );
     CHECK_FALSE( wr.handle_zoom_out() );
+    // Outside first person, movement is world-compass identity.
+    CHECK( wr.remap_move_delta( point::north ) == point::north );
     uistate.tileset_zoom = saved_zoom;
 }
 

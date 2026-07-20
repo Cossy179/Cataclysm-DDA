@@ -2450,6 +2450,14 @@ bool game::do_regular_action( action_id &act, avatar &player_character,
             } else {
                 const int pre_walk_moves = player_character.get_moves();
                 point_rel_ms dest_delta = get_delta_from_movement_action( act, iso_rotate::yes );
+#if defined(TILES)
+                // In the block_3d first-person view, movement keys are
+                // relative to the camera: forward walks the way the player
+                // is looking. (Auto-travel route steps below stay world
+                // deltas and are not remapped.)
+                dest_delta = point_rel_ms(
+                                 get_active_world_renderer().remap_move_delta( dest_delta.raw() ) );
+#endif
                 if( auto_travel_mode && !player_character.is_auto_moving() ) {
                     const bool use_grab_routing =
                         has_grabbed_single_tile_vehicle( player_character, here );

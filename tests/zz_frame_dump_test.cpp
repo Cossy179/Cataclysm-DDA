@@ -161,9 +161,13 @@ TEST_CASE( "block_3d_frame_dump", "[.frame-dump]" )
     here.build_map_cache( 0 );
     here.invalidate_visibility_cache();
     here.update_visibility_cache( 0 );
+    // One block-view draw absorbs the move into the tracked heading (in
+    // first person the camera only turns via the look keys), then enter
+    // first person facing the building.
+    const render_scene fp_scene{ point::zero, you.pos_bub(), vw, vh };
+    wr.draw_world( fp_scene, overlay_strings, color_blocks );
     uistate.tileset_zoom = 128;
     REQUIRE( wr.handle_zoom_in() );
-    const render_scene fp_scene{ point::zero, you.pos_bub(), vw, vh };
     // The camera eases toward its target over a few hundred ms of drawing;
     // pump frames until it has converged so the dump is deterministic.
     for( int i = 0; i < 30; i++ ) {
