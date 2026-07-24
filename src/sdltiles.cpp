@@ -3886,7 +3886,7 @@ class block_3d_world_renderer : public world_renderer
             // Invert this backend's own projection on the ground plane
             // (slab tops at 0.125 blocks), matching what the eye sees.
             render_3d::camera cam;
-            cam.tile_width = std::max( tilecontext ? tilecontext->get_tile_width() : 32, 8 );
+            cam.tile_width = scene_tile_width();
             cam.origin_x = win_size.x / 2;
             cam.origin_y = win_size.y / 2;
             float fdx = 0.0f;
@@ -3909,7 +3909,7 @@ class block_3d_world_renderer : public world_renderer
             render_3d::camera cam;
             // Clamp far zoom-out: below 8 px/tile the vertex volume explodes
             // without adding legibility.
-            cam.tile_width = std::max( tilecontext ? tilecontext->get_tile_width() : 32, 8 );
+            cam.tile_width = scene_tile_width();
             cam.origin_x = scene.dest.x + scene.width / 2;
             cam.origin_y = scene.dest.y + scene.height / 2;
 
@@ -4642,6 +4642,9 @@ class block_3d_world_renderer : public world_renderer
                         apply_interior_light( here, p, e );
                     }
                     attach_sprite( e, here.ter( p ).id().str() );
+                    if( e.tex == nullptr ) {
+                        e.color = mute_color( e.color );
+                    }
                     push( e );
                 } else {
                     // Walkable ground: a thin slab with contact shadows
@@ -4683,6 +4686,9 @@ class block_3d_world_renderer : public world_renderer
                         draw_entry furn_e{ dx, dy, dz, 0.125f, top_h,
                                            tile_color( here.furn( p )->color() ), entry_kind::block };
                         attach_sprite( furn_e, here.furn( p ).id().str() );
+                        if( furn_e.tex == nullptr ) {
+                            furn_e.color = mute_color( furn_e.color );
+                        }
                         push( furn_e );
                     }
                 }
@@ -5242,6 +5248,7 @@ class block_3d_world_renderer : public world_renderer
                         verts_.push_back( render_3d::vtx{ ox + xb, oy + sy1b, tb, ub, vbot, 0.0f } );
                         verts_.push_back( render_3d::vtx{ ox + xa, oy + sy1a, ta, ua, vbot, 0.0f } );
                     } else {
+                        fallback = mute_color( fallback );
                         const render_3d::rgba ca_c = render_3d::grade(
                                                          render_3d::shade( fallback, light * att0 * face ), env_ );
                         const render_3d::rgba cb_c = render_3d::grade(
@@ -6044,6 +6051,18 @@ class block_3d_world_renderer : public world_renderer
             return !tilecontext || tilecontext->get_base_tile_width() < 24;
         }
 
+        // The 3D scene's tile size in pixels. ASCII-class tilesets are 10px
+        // glyph grids that turned the block textures into unreadable mush at
+        // default zoom, so the scene runs its own 32px base cell there
+        // (scaled by the zoom level); real graphical tilesets keep their own
+        // scaled size.
+        int scene_tile_width() const {
+            if( use_builtin_art() ) {
+                return std::max( 2 * uistate.tileset_zoom, 8 );
+            }
+            return std::max( tilecontext ? tilecontext->get_tile_width() : 32, 8 );
+        }
+
         static bool texture_dims( SDL_Texture *const tex, float &w, float &h ) {
             if( !tex ) {
                 return false;
@@ -6168,6 +6187,50 @@ class block_3d_world_renderer : public world_renderer
                 r = { ter_tex::rock_floor, ter_tex::rock };
             } else if( has( "linoleum" ) || has( "tile" ) ) {
                 r = { ter_tex::tile_floor, ter_tex::wall_concrete };
+            } else if( has( "glass" ) ) {
+                r = { ter_tex::wall_concrete, ter_tex::window };
+            } else if( has( "bedrock" ) ) {
+                r = { ter_tex::rock, ter_tex::rock };
+            } else if( has( "stairs" ) || has( "ramp" ) || has( "ladder" ) ) {
+                r = { ter_tex::wood_side, ter_tex::wood_side };
+            } else if( has( "guardrail" ) || has( "railing" ) || has( "chainlink" ) ||
+                       has( "chickenwire" ) || has( "grate" ) || has( "manhole" ) ) {
+                r = { ter_tex::metal, ter_tex::metal };
+            } else if( has( "bridge" ) ) {
+                r = { ter_tex::concrete, ter_tex::concrete };
+            } else if( has( "curb" ) ) {
+                r = { ter_tex::sidewalk, ter_tex::dirt_side };
+            } else if( has( "column" ) || has( "pillar" ) || has( "support" ) ) {
+                r = { ter_tex::concrete, ter_tex::wall_concrete };
+            } else if( has( "pole" ) || has( "pylon" ) || has( "streetlight" ) ||
+                       has( "utility" ) || has( "mailbox" ) || has( "hydrant" ) ||
+                       has( "vending" ) || has( "locker" ) || has( "dumpster" ) ||
+                       has( "trash" ) ) {
+                r = { ter_tex::metal, ter_tex::metal };
+            } else if( has( "fridge" ) || has( "freezer" ) || has( "oven" ) ||
+                       has( "stove" ) || has( "washer" ) || has( "dryer" ) ||
+                       has( "dishwasher" ) || has( "safe" ) || has( "filing" ) ||
+                       has( "barrel" ) || has( "drum" ) || has( "keg" ) ||
+                       has( "tank" ) ) {
+                r = { ter_tex::metal, ter_tex::metal };
+            } else if( has( "sink" ) || has( "toilet" ) || has( "bathtub" ) ||
+                       has( "shower" ) ) {
+                r = { ter_tex::tile_floor, ter_tex::tile_floor };
+            } else if( has( "bed" ) || has( "sofa" ) || has( "couch" ) ||
+                       has( "armchair" ) || has( "chair" ) || has( "stool" ) ||
+                       has( "bench" ) || has( "seat" ) || has( "sign" ) ||
+                       has( "bookcase" ) || has( "shelf" ) || has( "shelves" ) ||
+                       has( "rack" ) || has( "dresser" ) || has( "desk" ) ||
+                       has( "cupboard" ) || has( "wardrobe" ) || has( "nightstand" ) ||
+                       has( "crate" ) || has( "cardboard" ) ) {
+                r = { ter_tex::wood_side, ter_tex::wood_side };
+            } else if( has( "gravestone" ) || has( "headstone" ) || has( "boulder" ) ||
+                       has( "monument" ) ) {
+                r = { ter_tex::rock, ter_tex::rock };
+            } else if( has( "flower" ) || has( "cattail" ) || has( "bulrush" ) ||
+                       has( "reed" ) || has( "hay" ) || has( "straw" ) ||
+                       has( "planter" ) ) {
+                r = { ter_tex::tall_grass, ter_tex::tall_grass };
             } else if( has( "brick" ) ) {
                 r = { ter_tex::concrete, ter_tex::wall_brick };
             } else if( has( "wall" ) ) {
@@ -6262,6 +6325,17 @@ class block_3d_world_renderer : public world_renderer
                 return true;
             }
             return false;
+        }
+
+        // Unclassified scenery (no texture mapping) renders in a muted
+        // version of its symbol color: mixed two-thirds toward its own gray,
+        // so odd street objects read as quiet scenery instead of neon blocks.
+        static render_3d::rgba mute_color( const render_3d::rgba &c ) {
+            const int g = ( c.r + c.g + c.b ) / 3;
+            const auto mix = [&]( const uint8_t v ) {
+                return static_cast<uint8_t>( ( v + 2 * g ) / 3 );
+            };
+            return render_3d::rgba{ mix( c.r ), mix( c.g ), mix( c.b ), c.a };
         }
 
         static art character_art( const Character &ch ) {

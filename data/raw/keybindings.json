@@ -2772,6 +2772,7 @@
     "category": "DEFAULTMODE",
     "id": "shift_e",
     "bindings": [
+      { "input_method": "keyboard_any", "key": "END" },
       { "input_method": "keyboard_code", "key": "RIGHT", "mod": [ "shift" ] },
       { "input_method": "gamepad", "key": "RS_RIGHT" }
     ]
@@ -2792,6 +2793,7 @@
     "category": "DEFAULTMODE",
     "id": "shift_w",
     "bindings": [
+      { "input_method": "keyboard_any", "key": "HOME" },
       { "input_method": "keyboard_code", "key": "LEFT", "mod": [ "shift" ] },
       { "input_method": "gamepad", "key": "RS_LEFT" }
     ]

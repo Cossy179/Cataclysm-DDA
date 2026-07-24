@@ -50,6 +50,9 @@ TEST_CASE( "block_3d_renderer_draws_scene", "[tiles][render_3d]" )
     override_option opt( "WORLD_RENDERER", "block_3d" );
     world_renderer &wr = get_active_world_renderer();
     REQUIRE( wr.id() == "block_3d" );
+    // The scene runs a 32px base cell at default zoom; pin the zoom so the
+    // pixel-exact picking assertions below stay deterministic.
+    uistate.tileset_zoom = 16;
 
     constexpr int view_size = 64;
     const render_scene scene{ point::zero, get_avatar().pos_bub(), view_size, view_size };
